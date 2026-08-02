@@ -1,6 +1,7 @@
 let currentVideoId = null;
 let currentVideoUrl = '';
 let currentVideoTitle = '';
+let activeSummaryRequestId = null;
 
 let selectedFormat = 'paragraph';
 let selectedLevel = 3;
@@ -12,6 +13,16 @@ const LEVEL_BADGES_SHORT = {
   4: '📚 Level 4: Detailed',
   5: '🔬 Level 5: Deep Dive'
 };
+
+chrome.runtime.onMessage.addListener((request) => {
+  if (
+    request.action === 'SUMMARY_PROGRESS' &&
+    request.summaryRequestId === activeSummaryRequestId &&
+    request.status
+  ) {
+    showStatus(request.status);
+  }
+});
 
 document.addEventListener('DOMContentLoaded', async () => {
   // Load saved settings
@@ -150,10 +161,12 @@ async function triggerSummary(forceRefresh = false) {
   const summarizeBtn = document.getElementById('summarize-btn');
 
   const selectedLang = langSelect ? langSelect.value : 'en';
+  const summaryRequestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  activeSummaryRequestId = summaryRequestId;
 
   if (summarizeBtn) summarizeBtn.disabled = true;
 
-  showStatus('⚡ Fetching transcript & generating summary...');
+  showStatus('Checking cache...');
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -164,6 +177,7 @@ async function triggerSummary(forceRefresh = false) {
       language: selectedLang,
       summaryLevel: selectedLevel,
       summaryFormat: selectedFormat,
+      summaryRequestId,
       forceRefresh
     });
 
@@ -181,6 +195,9 @@ async function triggerSummary(forceRefresh = false) {
   } catch (err) {
     showStatus(`⚠️ ${err.message || String(err)}`);
   } finally {
+    if (activeSummaryRequestId === summaryRequestId) {
+      activeSummaryRequestId = null;
+    }
     if (summarizeBtn) summarizeBtn.disabled = false;
   }
 }

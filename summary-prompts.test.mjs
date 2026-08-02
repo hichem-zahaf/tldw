@@ -3,6 +3,10 @@ import {
   ACTIVE_SUMMARY_PROMPT_VARIANT,
   buildSummaryPrompt
 } from './summary-prompts.js';
+import {
+  SUMMARY_PROGRESS_MESSAGES,
+  getSummaryProgressMessage
+} from './summary-progress.js';
 
 const transcript = 'First point. Second point. Third point.';
 
@@ -58,6 +62,24 @@ const transcript = 'First point. Second point. Third point.';
   });
 
   assert.equal(result.variantId, ACTIVE_SUMMARY_PROMPT_VARIANT);
+}
+
+{
+  assert.equal(
+    getSummaryProgressMessage('retrievingTranscript'),
+    'Retrieving transcript from Clipscript.uk...'
+  );
+  assert.equal(
+    getSummaryProgressMessage('summarizing'),
+    'Generating summary...'
+  );
+  assert.equal(
+    getSummaryProgressMessage('unknown-step'),
+    SUMMARY_PROGRESS_MESSAGES.checkingCache
+  );
+  assert.ok(
+    Object.values(SUMMARY_PROGRESS_MESSAGES).every(message => !/retrieving transcript.*generating summary/i.test(message))
+  );
 }
 
 console.log('summary-prompts tests passed');

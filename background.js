@@ -1,5 +1,6 @@
 import { generateSummary } from './summarizer.js';
 import { ACTIVE_SUMMARY_PROMPT_VARIANT } from './summary-prompts.js';
+import { getSummaryProgressMessage } from './summary-progress.js';
 
 // Default configuration settings
 const DEFAULT_SETTINGS = {
@@ -15,6 +16,26 @@ const DEFAULT_SETTINGS = {
 
 function buildSummaryCacheKey({ videoId, language, level, format, provider }) {
   return `summary_${videoId}_${language}_L${level}_F${format}_${provider}_P${ACTIVE_SUMMARY_PROMPT_VARIANT}`;
+}
+
+function createSummaryProgressReporter(request, sender) {
+  return (step) => {
+    if (!request.summaryRequestId) return;
+
+    const message = {
+      action: 'SUMMARY_PROGRESS',
+      summaryRequestId: request.summaryRequestId,
+      step,
+      status: getSummaryProgressMessage(step)
+    };
+
+    if (sender?.tab?.id !== undefined) {
+      chrome.tabs.sendMessage(sender.tab.id, message).catch(() => {});
+      return;
+    }
+
+    chrome.runtime.sendMessage(message).catch(() => {});
+  };
 }
 
 // Initialize settings on install
@@ -35,7 +56,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'GET_SUMMARY') {
-    handleGetSummary(request)
+    handleGetSummary(request, createSummaryProgressReporter(request, sender))
       .then(res => sendResponse(res))
       .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
     return true; // Keep channel open for async response
@@ -92,10 +113,12 @@ async function handleCheckCache({ videoId, language, summaryLevel, summaryFormat
 /**
  * Handle fetching transcription from Clipscript/YouTube and summarizing it
  */
-async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, language: requestedLang, summaryLevel: requestedLevel, summaryFormat: requestedFormat }) {
+async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, language: requestedLang, summaryLevel: requestedLevel, summaryFormat: requestedFormat }, onProgress = () => {}) {
   if (!videoId) {
     throw new Error('Missing YouTube video ID.');
   }
+
+  onProgress('checkingCache');
 
   const settings = await chrome.storage.local.get(DEFAULT_SETTINGS);
   const clipscriptApiKey = settings.clipscriptApiKey || DEFAULT_SETTINGS.clipscriptApiKey;
@@ -131,11 +154,13 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
 
   // Step 1: Request transcription from Clipscript API in original language
   console.log(`[TL;DW] Fetching transcript from Clipscript for video: ${videoId}`);
+  onProgress('retrievingTranscript');
   try {
-    const transcriptData = await fetchClipscriptTranscription(fullVideoUrl, clipscriptApiKey);
+    const transcriptData = await fetchClipscriptTranscription(fullVideoUrl, clipscriptApiKey, onProgress);
     transcriptText = transcriptData.transcript;
   } catch (clipErr) {
     console.warn(`[TL;DW] Clipscript transcription failed (${clipErr.message}), attempting fallback to YouTube native captions...`);
+    onProgress('usingNativeCaptions');
     
     // Fallback: Attempt fetching YouTube native captions directly
     try {
@@ -151,6 +176,7 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
 
   // Step 2: Generate summary using AI provider
   console.log(`[TL;DW] Generating summary using provider: ${settings.aiProvider}, prompt: ${ACTIVE_SUMMARY_PROMPT_VARIANT}`);
+  onProgress('summarizing');
   const summary = await generateSummary(transcriptText, {
     provider: settings.aiProvider,
     apiKey: settings.aiApiKey,
@@ -166,6 +192,7 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
     transcript: transcriptText,
     timestamp: Date.now()
   };
+  onProgress('savingSummary');
   await chrome.storage.local.set({ [cacheKey]: cacheData });
 
   return {
@@ -180,7 +207,7 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
 /**
  * Call Clipscript API to get YouTube video transcription in original video language
  */
-async function fetchClipscriptTranscription(videoUrl, apiKey) {
+async function fetchClipscriptTranscription(videoUrl, apiKey, onProgress = () => {}) {
   if (!apiKey) {
     throw new Error('Clipscript API Key is missing. Please configure it in extension options.');
   }
@@ -223,6 +250,7 @@ async function fetchClipscriptTranscription(videoUrl, apiKey) {
   const jobId = initialData.id;
   const maxAttempts = 30;
   const pollIntervalMs = 1500;
+  onProgress('waitingForTranscript');
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     await new Promise(r => setTimeout(r, pollIntervalMs));

@@ -5,6 +5,7 @@
 let currentVideoId = null;
 let currentSummaryData = null;
 let isSummarizing = false;
+let activeSummaryRequestId = null;
 
 let watchFormat = 'paragraph';
 let watchLevel = 3;
@@ -35,6 +36,16 @@ window.addEventListener('popstate', () => {
 });
 
 window.addEventListener('resize', debounce(repositionWatchSummaryBox, 250));
+
+chrome.runtime.onMessage.addListener((request) => {
+  if (
+    request.action === 'SUMMARY_PROGRESS' &&
+    request.summaryRequestId === activeSummaryRequestId &&
+    request.status
+  ) {
+    renderWatchLoadingStatus(request.status);
+  }
+});
 
 /**
  * Main Initialization
@@ -319,18 +330,18 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
   const summarizeBtn = document.getElementById('tldw-summarize-btn');
   const langSelect = document.getElementById('tldw-lang-select');
 
-  if (!container || !bodyEl) return;
+  if (!container || !bodyEl) {
+    isSummarizing = false;
+    return;
+  }
 
   const selectedLang = langSelect ? langSelect.value : 'en';
   const videoTitle = getWatchVideoTitle();
+  const summaryRequestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  activeSummaryRequestId = summaryRequestId;
 
   // Show Loading State
-  bodyEl.innerHTML = `
-    <div class="tldw-loading">
-      <div class="tldw-spinner"></div>
-      <span>Retrieving transcript via Clipscript.uk & generating summary...</span>
-    </div>
-  `;
+  renderWatchLoadingStatus('Checking cache...');
 
   if (summarizeBtn) summarizeBtn.style.display = 'none';
 
@@ -343,6 +354,7 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
       language: selectedLang,
       summaryLevel: watchLevel,
       summaryFormat: watchFormat,
+      summaryRequestId,
       forceRefresh
     });
 
@@ -385,8 +397,23 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
       summarizeBtn.textContent = '🔄 Retry Summarize';
     }
   } finally {
+    if (activeSummaryRequestId === summaryRequestId) {
+      activeSummaryRequestId = null;
+    }
     isSummarizing = false;
   }
+}
+
+function renderWatchLoadingStatus(status) {
+  const bodyEl = document.getElementById('tldw-body');
+  if (!bodyEl) return;
+
+  bodyEl.innerHTML = `
+    <div class="tldw-loading">
+      <div class="tldw-spinner"></div>
+      <span>${escapeHTML(status)}</span>
+    </div>
+  `;
 }
 
 /**
