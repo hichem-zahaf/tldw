@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TL;DW Options & Settings</title>
+  <link rel="stylesheet" href="options.css">
+</head>
+<body>
+  <div class="options-container">
+    <div class="header">
+      <div class="brand">
+        <span class="logo">⚡</span>
+        <h1>TL;DW Extension Settings</h1>
+      </div>
+      <p class="subtitle">Configure your Clipscript.uk transcription API key and AI summarization preferences.</p>
+    </div>
+
+    <!-- Clipscript API Section -->
+    <div class="section-card">
+      <h2>1. Clipscript.uk Transcription API</h2>
+      <p class="section-desc">Clipscript retrieves YouTube transcripts with high accuracy and speed.</p>
+      
+      <div class="form-group">
+        <label for="clipscript-key">Clipscript API Key</label>
+        <div class="input-with-button">
+          <input type="password" id="clipscript-key" placeholder="csk_live_..." autocomplete="off">
+          <button type="button" id="test-clipscript-btn" class="btn btn-secondary">Test Key</button>
+        </div>
+        <small class="help-text">Get your API key at <a href="https://clipscript.uk" target="_blank">clipscript.uk</a>.</small>
+      </div>
+    </div>
+
+    <!-- AI Summarizer Section -->
+    <div class="section-card">
+      <h2>2. AI Summarizer Provider</h2>
+      <p class="section-desc">Choose which AI model or engine generates the 1-paragraph summary from the transcript.</p>
+
+      <div class="form-group">
+        <label for="ai-provider">Summarization Engine</label>
+        <select id="ai-provider" class="select-input">
+          <option value="gemini">Google Gemini 1.5 Flash (Recommended - Free Key)</option>
+          <option value="openai">OpenAI GPT-4o-mini</option>
+          <option value="groq">Groq (Llama 3.3 70B)</option>
+          <option value="anthropic">Anthropic Claude 3.5 Haiku</option>
+          <option value="openrouter">OpenRouter API</option>
+        </select>
+      </div>
+
+      <div class="form-group" id="ai-key-group">
+        <label for="ai-key">AI Provider API Key</label>
+        <input type="password" id="ai-key" placeholder="Enter API Key for selected provider..." autocomplete="off">
+        <small class="help-text" id="ai-key-help">API key required for the chosen AI provider.</small>
+      </div>
+    </div>
+
+    <!-- Preferences Section -->
+    <div class="section-card">
+      <h2>3. Preferences & Display</h2>
+
+      <div class="form-group">
+        <label for="summary-lang">Default Summary Language</label>
+        <select id="summary-lang" class="select-input">
+          <option value="en" selected>🇺🇸 Always English</option>
+          <option value="ar">🇸🇦 Always Arabic (العربية)</option>
+          <option value="auto">🌐 Auto-Detect (Matches video/transcript language)</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>Summary Format</label>
+        <div class="format-options" id="format-picker">
+          <button type="button" class="format-btn active" data-format="paragraph">
+            <span class="format-icon">📝</span>
+            <span>Paragraph</span>
+          </button>
+          <button type="button" class="format-btn" data-format="bullets">
+            <span class="format-icon">📑</span>
+            <span>Bullets</span>
+          </button>
+          <button type="button" class="format-btn" data-format="key_takeaways">
+            <span class="format-icon">💡</span>
+            <span>Key Takeaways</span>
+          </button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="label-with-value">
+          <label for="summary-level-slider">Summary Detail Level</label>
+          <span id="level-badge" class="level-badge">🎯 Level 3: Standard (1 Paragraph)</span>
+        </div>
+        <div class="range-container">
+          <input type="range" id="summary-level-slider" min="1" max="5" step="1" value="3" class="range-slider">
+          <div class="range-ticks">
+            <span>⚡ TL;DR</span>
+            <span>📝 Short</span>
+            <span>🎯 Standard</span>
+            <span>📚 Detailed</span>
+            <span>🔬 Deep Dive</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="form-group checkbox-group">
+        <label class="switch">
+          <input type="checkbox" id="auto-summarize-watch">
+          <span class="slider"></span>
+        </label>
+        <span class="checkbox-label">Auto-summarize immediately upon opening YouTube video pages</span>
+      </div>
+
+      <div class="form-group checkbox-group">
+        <label class="switch">
+          <input type="checkbox" id="show-feed-buttons">
+          <span class="slider"></span>
+        </label>
+        <span class="checkbox-label">Show "⚡ Summarize" quick buttons on YouTube feed video cards</span>
+      </div>
+    </div>
+
+    <!-- Actions -->
+    <div class="actions-footer">
+      <div id="toast" class="toast" style="display:none;">Settings saved!</div>
+      <button id="save-btn" class="btn btn-primary">Save Settings</button>
+    </div>
+  </div>
+  <script src="options.js"></script>
+</body>
+</html>

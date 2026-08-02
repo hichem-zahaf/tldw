@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TL;DW - YouTube AI Summarizer</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <div class="header">
+      <div class="brand">
+        <span class="logo">⚡</span>
+        <span class="title">TL;DW</span>
+      </div>
+      <button id="options-btn" class="icon-btn" title="Settings">⚙️</button>
+    </div>
+
+    <div id="active-video-section" class="card">
+      <div class="video-info">
+        <div id="video-title" class="video-title">Detecting YouTube video...</div>
+      </div>
+
+      <!-- Format selector with icons -->
+      <div class="format-bar">
+        <button type="button" class="format-tab active" data-format="paragraph" title="Paragraph Prose">📝 Paragraph</button>
+        <button type="button" class="format-tab" data-format="bullets" title="Bullet Points">📑 Bullets</button>
+        <button type="button" class="format-tab" data-format="key_takeaways" title="Key Insights">💡 Takeaways</button>
+      </div>
+
+      <!-- Level slider (1 to 5) -->
+      <div class="slider-box">
+        <div class="slider-header">
+          <span class="slider-title">Detail Level</span>
+          <span id="popup-level-badge" class="level-badge-sm">🎯 Level 3: Standard</span>
+        </div>
+        <input type="range" id="popup-level-slider" min="1" max="5" step="1" value="3" class="range-slider">
+      </div>
+
+      <div class="actions-bar">
+        <select id="lang-select" class="select-input">
+          <option value="en" selected>🇺🇸 English</option>
+          <option value="ar">🇸🇦 العربية (Arabic)</option>
+          <option value="auto">🌐 Auto Language</option>
+        </select>
+        <button id="summarize-btn" class="btn btn-primary">✨ Summarize</button>
+      </div>
+
+      <div id="summary-result" class="summary-box" style="display:none;"></div>
+
+      <div id="status-msg" class="status-msg"></div>
+    </div>
+
+    <div id="not-youtube-section" class="card" style="display:none;">
+      <p class="info-text">Open any YouTube video to summarize it using Clipscript.uk & AI.</p>
+    </div>
+
+    <div class="footer">
+      <span class="powered-by">Powered by <strong>Clipscript.uk</strong></span>
+      <button id="clear-cache-btn" class="text-btn">Clear Cache</button>
+    </div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

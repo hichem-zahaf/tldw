@@ -1,0 +1,288 @@
+import { generateSummary } from './summarizer.js';
+
+// Default configuration settings
+const DEFAULT_SETTINGS = {
+  clipscriptApiKey: '',
+  aiProvider: 'gemini', // 'gemini', 'openai', 'groq', 'anthropic', 'openrouter'
+  aiApiKey: '',
+  summaryLanguage: 'en', // 'en', 'ar', 'auto'
+  summaryLevel: 3, // Level 1 (Ultra Short) to 5 (Deep Dive)
+  summaryFormat: 'paragraph', // 'paragraph', 'bullets', 'key_takeaways'
+  autoSummarizeWatch: false,
+  showFeedButtons: true
+};
+
+// Initialize settings on install
+chrome.runtime.onInstalled.addListener(async () => {
+  const current = await chrome.storage.local.get(null);
+  const newSettings = { ...DEFAULT_SETTINGS, ...current };
+  await chrome.storage.local.set(newSettings);
+  console.log('[TL;DW] Extension initialized with settings:', newSettings);
+});
+
+// Message handling
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === 'CHECK_CACHE') {
+    handleCheckCache(request)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ cached: false, error: err.message }));
+    return true; // Keep channel open for async response
+  }
+
+  if (request.action === 'GET_SUMMARY') {
+    handleGetSummary(request)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true; // Keep channel open for async response
+  }
+
+  if (request.action === 'GET_SETTINGS') {
+    chrome.storage.local.get(DEFAULT_SETTINGS).then(settings => sendResponse({ success: true, settings }));
+    return true;
+  }
+
+  if (request.action === 'SAVE_SETTINGS') {
+    chrome.storage.local.set(request.settings).then(() => sendResponse({ success: true }));
+    return true;
+  }
+
+  if (request.action === 'CLEAR_CACHE') {
+    clearSummaryCache().then(() => sendResponse({ success: true }));
+    return true;
+  }
+});
+
+/**
+ * Fast Cache Checker - Returns immediately without making network calls
+ */
+async function handleCheckCache({ videoId, language, summaryLevel, summaryFormat }) {
+  if (!videoId) return { cached: false };
+
+  const settings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+  const targetLang = language || settings.summaryLanguage || 'en';
+  const level = summaryLevel || settings.summaryLevel || 3;
+  const format = summaryFormat || settings.summaryFormat || 'paragraph';
+
+  const cacheKey = `summary_${videoId}_${targetLang}_L${level}_F${format}_${settings.aiProvider}`;
+
+  const cached = await chrome.storage.local.get(cacheKey);
+  if (cached && cached[cacheKey]) {
+    return {
+      cached: true,
+      summary: cached[cacheKey].summary,
+      transcript: cached[cacheKey].transcript,
+      videoId
+    };
+  }
+
+  return { cached: false, videoId };
+}
+
+/**
+ * Handle fetching transcription from Clipscript/YouTube and summarizing it
+ */
+async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, language: requestedLang, summaryLevel: requestedLevel, summaryFormat: requestedFormat }) {
+  if (!videoId) {
+    throw new Error('Missing YouTube video ID.');
+  }
+
+  const settings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+  const clipscriptApiKey = settings.clipscriptApiKey || DEFAULT_SETTINGS.clipscriptApiKey;
+
+  const targetLang = requestedLang || settings.summaryLanguage || 'en';
+  const targetLevel = requestedLevel || settings.summaryLevel || 3;
+  const targetFormat = requestedFormat || settings.summaryFormat || 'paragraph';
+
+  const cacheKey = `summary_${videoId}_${targetLang}_L${targetLevel}_F${targetFormat}_${settings.aiProvider}`;
+
+  // Check cache unless forceRefresh is explicitly requested
+  if (!forceRefresh) {
+    const cached = await chrome.storage.local.get(cacheKey);
+    if (cached && cached[cacheKey]) {
+      return {
+        success: true,
+        summary: cached[cacheKey].summary,
+        transcript: cached[cacheKey].transcript,
+        cached: true,
+        videoId
+      };
+    }
+  }
+
+  const fullVideoUrl = videoUrl || `https://www.youtube.com/watch?v=${videoId}`;
+  let transcriptText = '';
+
+  // Step 1: Request transcription from Clipscript API in original language
+  console.log(`[TL;DW] Fetching transcript from Clipscript for video: ${videoId}`);
+  try {
+    const transcriptData = await fetchClipscriptTranscription(fullVideoUrl, clipscriptApiKey);
+    transcriptText = transcriptData.transcript;
+  } catch (clipErr) {
+    console.warn(`[TL;DW] Clipscript transcription failed (${clipErr.message}), attempting fallback to YouTube native captions...`);
+    
+    // Fallback: Attempt fetching YouTube native captions directly
+    try {
+      transcriptText = await fetchYouTubeNativeTranscript(videoId);
+    } catch (fallbackErr) {
+      throw new Error(`Clipscript Error: ${clipErr.message}. Fallback Error: ${fallbackErr.message}`);
+    }
+  }
+
+  if (!transcriptText || transcriptText.trim().length === 0) {
+    throw new Error('Transcript is empty or unavailable for this video.');
+  }
+
+  // Step 2: Generate summary using AI provider
+  console.log(`[TL;DW] Generating summary using provider: ${settings.aiProvider}`);
+  const summary = await generateSummary(transcriptText, {
+    provider: settings.aiProvider,
+    apiKey: settings.aiApiKey,
+    language: targetLang,
+    videoTitle,
+    summaryLevel: targetLevel,
+    summaryFormat: targetFormat
+  });
+
+  // Step 3: Cache result
+  const cacheData = {
+    summary,
+    transcript: transcriptText,
+    timestamp: Date.now()
+  };
+  await chrome.storage.local.set({ [cacheKey]: cacheData });
+
+  return {
+    success: true,
+    summary,
+    transcript: transcriptText,
+    cached: false,
+    videoId
+  };
+}
+
+/**
+ * Call Clipscript API to get YouTube video transcription in original video language
+ */
+async function fetchClipscriptTranscription(videoUrl, apiKey) {
+  if (!apiKey) {
+    throw new Error('Clipscript API Key is missing. Please configure it in extension options.');
+  }
+
+  // 1. Initial POST request
+  const createResp = await fetch('https://clipscript.uk/api/v1/transcriptions', {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${apiKey}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({
+      url: videoUrl,
+      timestamps: false
+    })
+  });
+
+  if (!createResp.ok) {
+    let errMessage = `Clipscript API status ${createResp.status}`;
+    try {
+      const errJson = await createResp.json();
+      if (errJson.message) errMessage = errJson.message;
+      else if (errJson.error) errMessage = errJson.error;
+    } catch (_) {}
+    throw new Error(errMessage);
+  }
+
+  const initialData = await createResp.json();
+
+  // If cached on Clipscript server (HTTP 200 with complete)
+  if (initialData.status === 'complete' && initialData.transcript) {
+    return initialData;
+  }
+
+  if (!initialData.id) {
+    throw new Error('Clipscript did not return a valid job ID.');
+  }
+
+  // 2. Poll until complete or failed (max 30 attempts x 1.5s = 45 seconds)
+  const jobId = initialData.id;
+  const maxAttempts = 30;
+  const pollIntervalMs = 1500;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    await new Promise(r => setTimeout(r, pollIntervalMs));
+
+    const pollResp = await fetch(`https://clipscript.uk/api/v1/transcriptions/${jobId}`, {
+      headers: {
+        'Authorization': `Bearer ${apiKey}`
+      }
+    });
+
+    if (!pollResp.ok) {
+      throw new Error(`Clipscript polling error (${pollResp.status}).`);
+    }
+
+    const pollData = await pollResp.json();
+
+    if (pollData.status === 'complete') {
+      if (!pollData.transcript) {
+        throw new Error('Clipscript job complete but no transcript text returned.');
+      }
+      return pollData;
+    }
+
+    if (pollData.status === 'failed') {
+      throw new Error(pollData.error || 'Clipscript transcription failed for this video.');
+    }
+  }
+
+  throw new Error('Clipscript transcription timed out.');
+}
+
+/**
+ * Fallback: Fetch native YouTube captions directly from page timedtext tracks
+ */
+async function fetchYouTubeNativeTranscript(videoId) {
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const response = await fetch(watchUrl, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }
+  });
+  const html = await response.text();
+
+  const match = html.match(/"captionTracks":\s*(\[[^\]]+\])/);
+  if (!match) {
+    throw new Error('No native captions found on YouTube.');
+  }
+
+  const rawJson = match[1].replace(/\\u0026/g, '&');
+  const captionTracks = JSON.parse(rawJson);
+
+  if (!captionTracks || captionTracks.length === 0) {
+    throw new Error('No caption tracks found.');
+  }
+
+  const track = captionTracks.find(t => t.languageCode === 'ar') ||
+                captionTracks.find(t => t.languageCode === 'en') ||
+                captionTracks[0];
+
+  const trackUrl = track.baseUrl.replace(/\\u0026/g, '&');
+  const trackResp = await fetch(trackUrl);
+  const trackText = await trackResp.text();
+
+  if (!trackText || trackText.trim().length === 0) {
+    throw new Error('Empty caption file.');
+  }
+
+  // Strip XML tags
+  const text = trackText.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  return text;
+}
+
+/**
+ * Helper to clear all summary caches
+ */
+async function clearSummaryCache() {
+  const all = await chrome.storage.local.get(null);
+  const cacheKeys = Object.keys(all).filter(k => k.startsWith('summary_'));
+  if (cacheKeys.length > 0) {
+    await chrome.storage.local.remove(cacheKeys);
+  }
+}
