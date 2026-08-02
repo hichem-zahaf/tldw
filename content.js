@@ -10,11 +10,11 @@ let watchFormat = 'paragraph';
 let watchLevel = 3;
 
 const LEVEL_LABELS = {
-  1: '⚡ Level 1: TL;DR',
-  2: '📝 Level 2: Short',
-  3: '🎯 Level 3: Standard',
-  4: '📚 Level 4: Detailed',
-  5: '🔬 Level 5: Deep Dive'
+  1: 'Brief',
+  2: 'Short',
+  3: 'Medium',
+  4: 'Detailed',
+  5: 'Full'
 };
 
 // Observe DOM mutations for infinite scrolling feed items
@@ -34,6 +34,8 @@ window.addEventListener('popstate', () => {
   setTimeout(initTLDW, 500);
 });
 
+window.addEventListener('resize', debounce(repositionWatchSummaryBox, 250));
+
 /**
  * Main Initialization
  */
@@ -49,6 +51,8 @@ function initTLDW() {
       scheduleWatchBoxInjection();
     } else if (!document.getElementById('tldw-summary-container')) {
       scheduleWatchBoxInjection();
+    } else {
+      repositionWatchSummaryBox();
     }
   }
 
@@ -84,13 +88,9 @@ function injectWatchSummaryBox() {
   if (document.getElementById('tldw-summary-container')) return true;
 
   // Potential injection anchors on YouTube watch page
-  const targetAnchor =
-    document.querySelector('ytd-watch-metadata#watch-metadata') ||
-    document.querySelector('#above-the-fold') ||
-    document.querySelector('#meta') ||
-    document.querySelector('#primary-inner');
+  const targetAnchor = getBelowVideoSummaryAnchor();
 
-  if (!targetAnchor) return false;
+  if (!targetAnchor && !getSidebarSummaryAnchor()) return false;
 
   const container = document.createElement('div');
   container.id = 'tldw-summary-container';
@@ -102,37 +102,49 @@ function injectWatchSummaryBox() {
         <span>⚡ TL;DW</span>
         <span class="tldw-badge">AI Summary</span>
       </div>
-      <div class="tldw-actions">
-        <select id="tldw-lang-select" class="tldw-btn" title="Summary Language">
-          <option value="en" selected>🇺🇸 English</option>
-          <option value="ar">🇸🇦 العربية (Arabic)</option>
-          <option value="auto">🌐 Auto Language</option>
+      <div class="tldw-compact-toolbar" aria-label="Summary toolbar">
+        <select id="tldw-lang-select" class="tldw-select" title="Summary language" aria-label="Summary language">
+          <option value="en" selected>English</option>
+          <option value="ar">العربية</option>
+          <option value="auto">Auto</option>
         </select>
-        <button id="tldw-transcript-btn" class="tldw-btn" style="display:none;" title="Toggle Full Transcript">
-          📄 Transcript
+        <button id="tldw-transcript-btn" class="tldw-btn tldw-btn-secondary" style="display:none;" title="Toggle full transcript">
+          Transcript
         </button>
-        <button id="tldw-copy-btn" class="tldw-btn" style="display:none;" title="Copy Summary">
-          📋 Copy
+        <button id="tldw-copy-btn" class="tldw-icon-btn" style="display:none;" title="Copy summary" aria-label="Copy summary" data-sidebar-label="Copy">
+          <span aria-hidden="true">⧉</span>
         </button>
-        <button id="tldw-refresh-btn" class="tldw-btn" style="display:none;" title="Refresh Summary">
-          🔄
+        <button id="tldw-refresh-btn" class="tldw-icon-btn" style="display:none;" title="Refresh summary" aria-label="Refresh summary" data-sidebar-label="Refresh">
+          <span aria-hidden="true">↻</span>
         </button>
         <button id="tldw-summarize-btn" class="tldw-btn tldw-btn-primary">
-          ✨ Summarize Video
+          Summarize
         </button>
       </div>
     </div>
 
-    <!-- Format and Detail Level Toolbar -->
-    <div class="tldw-toolbar-row">
-      <div class="tldw-format-group">
-        <button type="button" class="tldw-format-btn active" data-format="paragraph">📝 Paragraph</button>
-        <button type="button" class="tldw-format-btn" data-format="bullets">📑 Bullets</button>
-        <button type="button" class="tldw-format-btn" data-format="key_takeaways">💡 Takeaways</button>
+    <div class="tldw-settings-row" aria-label="Summary settings">
+      <div class="tldw-segmented tldw-format-group" role="group" aria-label="Summary format">
+        <button type="button" class="tldw-format-btn active" data-format="paragraph">Paragraph</button>
+        <button type="button" class="tldw-format-btn" data-format="bullets">Bullets</button>
+        <button type="button" class="tldw-format-btn" data-format="key_takeaways">Takeaways</button>
       </div>
-      <div class="tldw-slider-group">
-        <span id="tldw-watch-level-badge" class="tldw-level-badge">🎯 Level 3: Standard</span>
-        <input type="range" id="tldw-watch-level-slider" min="1" max="5" step="1" value="3" class="tldw-range-slider" title="Detail Level Slider">
+      <div class="tldw-level-group">
+        <span class="tldw-settings-label">Length</span>
+        <div class="tldw-segmented tldw-detail-group" role="group" aria-label="Summary length">
+          <button type="button" class="tldw-level-btn" data-level="1">Brief</button>
+          <button type="button" class="tldw-level-btn" data-level="2">Short</button>
+          <button type="button" class="tldw-level-btn active" data-level="3">Medium</button>
+          <button type="button" class="tldw-level-btn" data-level="4">Detailed</button>
+          <button type="button" class="tldw-level-btn" data-level="5">Full</button>
+        </div>
+        <select id="tldw-level-select" class="tldw-select tldw-level-select" title="Summary length" aria-label="Summary length">
+          <option value="1">Brief</option>
+          <option value="2">Short</option>
+          <option value="3" selected>Medium</option>
+          <option value="4">Detailed</option>
+          <option value="5">Full</option>
+        </select>
       </div>
     </div>
 
@@ -144,13 +156,7 @@ function injectWatchSummaryBox() {
     <div id="tldw-transcript-box" class="tldw-transcript-box"></div>
   `;
 
-  // Insert before description or at top of target anchor
-  const descriptionElement = targetAnchor.querySelector('#description') || targetAnchor.querySelector('#bottom-row');
-  if (descriptionElement && descriptionElement.parentNode) {
-    descriptionElement.parentNode.insertBefore(container, descriptionElement);
-  } else {
-    targetAnchor.prepend(container);
-  }
+  placeWatchSummaryBox(container);
 
   // Bind Event Listeners
   document.getElementById('tldw-summarize-btn').addEventListener('click', () => fetchAndRenderWatchSummary(false));
@@ -158,14 +164,19 @@ function injectWatchSummaryBox() {
   document.getElementById('tldw-copy-btn').addEventListener('click', copySummaryToClipboard);
   document.getElementById('tldw-transcript-btn').addEventListener('click', toggleTranscriptBox);
   document.getElementById('tldw-lang-select').addEventListener('change', () => fetchAndRenderWatchSummary(false));
-
-  const slider = document.getElementById('tldw-watch-level-slider');
-  slider.addEventListener('input', (e) => {
+  document.getElementById('tldw-level-select').addEventListener('change', (e) => {
     watchLevel = Number(e.target.value);
     updateWatchLevelBadge(watchLevel);
-  });
-  slider.addEventListener('change', () => {
     fetchAndRenderWatchSummary(false);
+  });
+
+  const levelBtns = container.querySelectorAll('.tldw-level-btn');
+  levelBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+      watchLevel = Number(btn.dataset.level);
+      updateWatchLevelBadge(watchLevel);
+      fetchAndRenderWatchSummary(false);
+    });
   });
 
   const formatBtns = container.querySelectorAll('.tldw-format-btn');
@@ -182,7 +193,6 @@ function injectWatchSummaryBox() {
     if (res?.success && res.settings) {
       watchFormat = res.settings.summaryFormat || 'paragraph';
       watchLevel = res.settings.summaryLevel || 3;
-      slider.value = watchLevel;
       updateWatchLevelBadge(watchLevel);
       updateWatchFormatButtons(watchFormat);
 
@@ -192,6 +202,9 @@ function injectWatchSummaryBox() {
     }
   });
 
+  setTimeout(repositionWatchSummaryBox, 1000);
+  setTimeout(repositionWatchSummaryBox, 2500);
+
   return true;
 }
 
@@ -199,19 +212,91 @@ function updateWatchFormatButtons(format) {
   const container = document.getElementById('tldw-summary-container');
   if (!container) return;
   container.querySelectorAll('.tldw-format-btn').forEach(btn => {
-    if (btn.dataset.format === format) {
-      btn.classList.add('active');
-    } else {
-      btn.classList.remove('active');
-    }
+    const isActive = btn.dataset.format === format;
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', String(isActive));
   });
 }
 
 function updateWatchLevelBadge(level) {
-  const badge = document.getElementById('tldw-watch-level-badge');
-  if (badge) {
-    badge.textContent = LEVEL_LABELS[level] || `Level ${level}`;
+  const container = document.getElementById('tldw-summary-container');
+  if (!container) return;
+  container.querySelectorAll('.tldw-level-btn').forEach(btn => {
+    const isActive = Number(btn.dataset.level) === Number(level);
+    btn.classList.toggle('active', isActive);
+    btn.setAttribute('aria-pressed', String(isActive));
+    btn.title = LEVEL_LABELS[btn.dataset.level] || `Level ${btn.dataset.level}`;
+  });
+
+  const levelSelect = container.querySelector('#tldw-level-select');
+  if (levelSelect) {
+    levelSelect.value = String(level);
   }
+}
+
+function repositionWatchSummaryBox() {
+  const container = document.getElementById('tldw-summary-container');
+  if (container) {
+    placeWatchSummaryBox(container);
+  }
+}
+
+function placeWatchSummaryBox(container) {
+  const sidebarAnchor = getSidebarSummaryAnchor();
+
+  if (sidebarAnchor) {
+    container.classList.add('tldw-sidebar');
+    container.classList.remove('tldw-below-video');
+    sidebarAnchor.prepend(container);
+    return true;
+  }
+
+  const belowVideoAnchor = getBelowVideoSummaryAnchor();
+  if (!belowVideoAnchor) return false;
+
+  container.classList.add('tldw-below-video');
+  container.classList.remove('tldw-sidebar');
+
+  const descriptionElement = belowVideoAnchor.querySelector('#description') || belowVideoAnchor.querySelector('#bottom-row');
+  if (descriptionElement && descriptionElement.parentNode) {
+    descriptionElement.parentNode.insertBefore(container, descriptionElement);
+  } else {
+    belowVideoAnchor.prepend(container);
+  }
+
+  return true;
+}
+
+function getSidebarSummaryAnchor() {
+  if (!window.matchMedia('(min-width: 1120px)').matches) return null;
+
+  const secondaryInner =
+    document.querySelector('ytd-watch-flexy #secondary-inner') ||
+    document.querySelector('#secondary-inner');
+
+  if (!secondaryInner) return null;
+
+  const secondary = secondaryInner.closest('#secondary') || secondaryInner;
+  const secondaryRect = secondary.getBoundingClientRect();
+  if (secondaryRect.width < 300 || secondaryRect.height === 0) return null;
+
+  return secondaryInner;
+}
+
+function getBelowVideoSummaryAnchor() {
+  return (
+    document.querySelector('ytd-watch-metadata#watch-metadata') ||
+    document.querySelector('#above-the-fold') ||
+    document.querySelector('#meta') ||
+    document.querySelector('#primary-inner')
+  );
+}
+
+function setWatchSummaryDirection(isRtl) {
+  const container = document.getElementById('tldw-summary-container');
+  if (!container) return;
+  container.classList.toggle('tldw-rtl', isRtl);
+  container.classList.toggle('tldw-ltr', !isRtl);
 }
 
 /**
@@ -269,7 +354,7 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
 
     // Detect RTL (Arabic) or LTR text
     const isArabic = isArabicText(response.summary);
-    container.className = isArabic ? 'tldw-rtl' : 'tldw-ltr';
+    setWatchSummaryDirection(isArabic);
 
     // Render Formatted Markdown Summary
     bodyEl.innerHTML = `
@@ -323,8 +408,13 @@ function copySummaryToClipboard() {
     const btn = document.getElementById('tldw-copy-btn');
     if (btn) {
       const origText = btn.innerHTML;
-      btn.innerHTML = '✅ Copied!';
-      setTimeout(() => { btn.innerHTML = origText; }, 2000);
+      const origSidebarLabel = btn.dataset.sidebarLabel;
+      btn.innerHTML = '<span aria-hidden="true">✓</span>';
+      btn.dataset.sidebarLabel = 'Copied';
+      setTimeout(() => {
+        btn.innerHTML = origText;
+        btn.dataset.sidebarLabel = origSidebarLabel;
+      }, 2000);
     }
   });
 }
