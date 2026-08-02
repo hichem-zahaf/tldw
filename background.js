@@ -1,4 +1,5 @@
 import { generateSummary } from './summarizer.js';
+import { ACTIVE_SUMMARY_PROMPT_VARIANT } from './summary-prompts.js';
 
 // Default configuration settings
 const DEFAULT_SETTINGS = {
@@ -11,6 +12,10 @@ const DEFAULT_SETTINGS = {
   autoSummarizeWatch: false,
   showFeedButtons: true
 };
+
+function buildSummaryCacheKey({ videoId, language, level, format, provider }) {
+  return `summary_${videoId}_${language}_L${level}_F${format}_${provider}_P${ACTIVE_SUMMARY_PROMPT_VARIANT}`;
+}
 
 // Initialize settings on install
 chrome.runtime.onInstalled.addListener(async () => {
@@ -63,7 +68,13 @@ async function handleCheckCache({ videoId, language, summaryLevel, summaryFormat
   const level = summaryLevel || settings.summaryLevel || 3;
   const format = summaryFormat || settings.summaryFormat || 'paragraph';
 
-  const cacheKey = `summary_${videoId}_${targetLang}_L${level}_F${format}_${settings.aiProvider}`;
+  const cacheKey = buildSummaryCacheKey({
+    videoId,
+    language: targetLang,
+    level,
+    format,
+    provider: settings.aiProvider
+  });
 
   const cached = await chrome.storage.local.get(cacheKey);
   if (cached && cached[cacheKey]) {
@@ -93,7 +104,13 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
   const targetLevel = requestedLevel || settings.summaryLevel || 3;
   const targetFormat = requestedFormat || settings.summaryFormat || 'paragraph';
 
-  const cacheKey = `summary_${videoId}_${targetLang}_L${targetLevel}_F${targetFormat}_${settings.aiProvider}`;
+  const cacheKey = buildSummaryCacheKey({
+    videoId,
+    language: targetLang,
+    level: targetLevel,
+    format: targetFormat,
+    provider: settings.aiProvider
+  });
 
   // Check cache unless forceRefresh is explicitly requested
   if (!forceRefresh) {
@@ -133,7 +150,7 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
   }
 
   // Step 2: Generate summary using AI provider
-  console.log(`[TL;DW] Generating summary using provider: ${settings.aiProvider}`);
+  console.log(`[TL;DW] Generating summary using provider: ${settings.aiProvider}, prompt: ${ACTIVE_SUMMARY_PROMPT_VARIANT}`);
   const summary = await generateSummary(transcriptText, {
     provider: settings.aiProvider,
     apiKey: settings.aiApiKey,
