@@ -90,6 +90,11 @@ function getLanguageRule(language) {
     : 'Write the entire answer in clear English.';
 }
 
+function isQuestionTitle(videoTitle) {
+  const title = String(videoTitle || '').trim();
+  return /[?\u061F]$/.test(title) || /^(?:is|are|can|could|should|would|will|do|does|did|what|why|how|who|where|when)\b/i.test(title);
+}
+
 export function buildSummaryPrompt({
   transcript,
   language = 'en',
@@ -107,6 +112,9 @@ export function buildSummaryPrompt({
     lengthRule,
     getLanguageRule(language),
     FORMAT_RULES[format] || FORMAT_RULES.paragraph,
+    ...(isQuestionTitle(videoTitle)
+      ? ['If the video title asks a question, answer that question directly before adding supporting detail.']
+      : []),
     ...variant.extraRules
   ];
 

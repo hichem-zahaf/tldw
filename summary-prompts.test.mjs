@@ -26,6 +26,18 @@ const transcript = 'First point. Second point. Third point.';
 {
   const result = buildSummaryPrompt({
     transcript,
+    videoTitle: 'Is this productivity trick actually useful?',
+    language: 'en',
+    summaryLevel: 2,
+    summaryFormat: 'paragraph'
+  });
+
+  assert.match(result.prompt, /If the video title asks a question, answer that question directly/);
+}
+
+{
+  const result = buildSummaryPrompt({
+    transcript,
     language: 'ar',
     summaryLevel: 1,
     summaryFormat: 'key_takeaways',
