@@ -42,59 +42,134 @@ export async function generateSummary(transcript, options = {}) {
 }
 
 /**
+ * Helper to determine max token limit per summary level
+ */
+function getMaxTokens(level) {
+  const l = Number(level) || 3;
+  if (l === 1) return 120;
+  if (l === 2) return 250;
+  if (l === 3) return 500;
+  if (l === 4) return 1000;
+  return 2000;
+}
+
+/**
  * Construct system & user prompts for LLM summarization
  */
-function buildPrompt(transcript, language, videoTitle, summaryLevel = 3, summaryFormat = 'paragraph') {
+function buildPrompt(
+  transcript,
+  language,
+  videoTitle,
+  summaryLevel = 3,
+  summaryFormat = 'paragraph'
+) {
   const isArabicTarget = language === 'ar';
-  
-  let targetLangInstruction = isArabicTarget
-    ? 'Write the summary in fluent, natural Arabic.'
-    : 'Write the summary in clear, natural, highly readable English (translate key concepts if transcript is in another language).';
 
-  // Length Level 1..5
-  const level = Number(summaryLevel) || 3;
-  let lengthInstruction = '';
-  if (level === 1) {
-    lengthInstruction = 'Provide an ultra-concise TL;DR in exactly 1 sharp sentence (max 25 words).';
-  } else if (level === 2) {
-    lengthInstruction = 'Provide a brief summary in 2 to 3 concise sentences.';
-  } else if (level === 3) {
-    lengthInstruction = 'Provide a balanced, standard summary in 1 well-structured paragraph (4 to 6 sentences).';
-  } else if (level === 4) {
-    lengthInstruction = 'Provide a detailed summary in 2 to 3 thorough paragraphs with full context.';
-  } else if (level === 5) {
-    lengthInstruction = 'Provide a comprehensive deep-dive summary breakdown covering all core topics, nuance, and key details.';
-  }
+  // Handles values such as 1, "1", or "Level 1: TL;DR" const levelMatch = String(summaryLevel).match(/[1-5]/); const level = levelMatch ? Number(levelMatch[0]) : 3;
 
-  // Format Instruction
-  let formatInstruction = '';
+  const targetLangInstruction = isArabicTarget
+    ? 'Write in fluent, natural Arabic using simple, direct phrasing.'
+    : 'Write in clear, natural English. Translate key concepts when necessary.';
+
+  const instructionsByLevel = {
+    1: {
+      bullets:
+        'Return EXACTLY 1 or 2 extremely short bullet points, with no more than 25 words total.',
+      key_takeaways:
+        'Return EXACTLY 1 key takeaway, with no more than 20 words total.',
+      paragraph:
+        'Return EXACTLY 1 sharp sentence, with no more than 20 words total.'
+    },
+    2: {
+      bullets:
+        'Return 2 to 3 concise bullet points, with no more than 50 words total.',
+      key_takeaways:
+        'Return 2 to 3 concise takeaways, with no more than 50 words total.',
+      paragraph:
+        'Return 2 to 3 concise sentences, with no more than 50 words total.'
+    },
+    3: {
+      bullets:
+        'Return 4 to 5 concise bullet points, with no more than 120 words total.',
+      key_takeaways:
+        'Return 3 to 4 key takeaways, with no more than 120 words total.',
+      paragraph:
+        'Return one structured paragraph of 4 to 6 sentences, with no more than 120 words total.'
+    },
+    4: {
+      bullets:
+        'Return 6 to 8 informative bullet points, with no more than 220 words total.',
+      key_takeaways:
+        'Return 5 to 7 key insights, with no more than 220 words total.',
+      paragraph:
+        'Return 2 to 3 structured paragraphs, with no more than 250 words total.'
+    },
+    5: {
+      bullets:
+        'Return a comprehensive breakdown of 8 to 12 bullet points, with no more than 400 words total.',
+      key_takeaways:
+        'Return 7 to 10 comprehensive takeaways, with no more than 400 words total.',
+      paragraph:
+        'Return a comprehensive summary in 3 to 5 structured paragraphs, with no more than 450 words total.'
+    }
+  };
+
+  const formatInstruction =
+    instructionsByLevel[level][summaryFormat] ||
+    instructionsByLevel[level].paragraph;
+
+  let scanabilityInstruction;
+
   if (summaryFormat === 'bullets') {
-    formatInstruction = 'Format the summary strictly as a clean, bulleted list (`- point`).';
+    scanabilityInstruction = `
+- Output bullet points only. Do not add an opening summary, heading, or conclusion.
+- Cover one distinct idea per bullet.
+- Order the bullets from most important to least important.
+- For Levels 2–5, begin each bullet with a short **2–5 word label**, followed by a concise explanation.
+- Bold only the short label. Never bold complete sentences or long clauses.
+- Keep bullets similar in length and generally under 22 words each.
+- Avoid sub-bullets, except when absolutely necessary at Level 5.
+`;
   } else if (summaryFormat === 'key_takeaways') {
-    formatInstruction = 'Format the summary as a list of Key Insights & Takeaways with bold lead-in titles for each point.';
+    scanabilityInstruction = `
+- Output takeaways only. Do not add an introduction, heading, or conclusion.
+- Begin each takeaway with a short **2–5 word title**.
+- Follow the title with one concise sentence explaining the insight.
+- Bold only the title, not the explanation.
+- Do not repeat the same conclusion across multiple takeaways.
+`;
   } else {
-    formatInstruction = 'Format the summary as clean narrative prose paragraphs.';
+    scanabilityInstruction = `
+- Use one idea per sentence.
+- Lead with the main conclusion.
+- Arrange supporting points in descending order of importance.
+- Bold no more than two short phrases in the entire summary.
+- Do not use a heading or prepend labels such as "TL;DR:".
+`;
   }
 
-  const prompt = `You are an expert video content summarizer. Your task is to summarize the video transcript provided below.
+  return {
+    isArabicTarget,
+    prompt: `You are an expert video summarizer. Produce a summary that can be understood in a few seconds and read comfortably in full.
 
-Context/Title: "${videoTitle || 'YouTube Video'}"
+Title/context: "${videoTitle || 'YouTube Video'}"
 
-Instructions:
-1. ${lengthInstruction}
-2. ${formatInstruction}
-3. ${targetLangInstruction}
-4. Use markdown formatting (**bold** important concepts and takeaways for fast scanning).
-5. Capture the core ideas, key insights, and primary takeaway.
-6. Do NOT use meta-phrases like "In this video", "The speaker says", or "This transcript describes". State the key insights directly.
-7. Keep it clear, precise, and highly engaging to read.
+OUTPUT REQUIREMENTS:
+1. ${formatInstruction}
+2. ${targetLangInstruction} ${scanabilityInstruction}
+3. State insights directly. Never write phrases such as "In this video", "The speaker says", or "The transcript explains".
+4. Preserve important distinctions, conclusions, numbers, and caveats from the source.
+5. Remove repetition, filler, anecdotes, and examples unless they materially support the conclusion.
+6. Avoid long parenthetical remarks and unnecessary qualifiers.
+7. Do not introduce facts or conclusions that are not supported by the transcript.
+8. Return only the requested summary.
+9. Check the number of bullets, sentences, and words before answering. Treat all limits as strict.
 
 Transcript:
 """
 ${transcript.slice(0, 30000)}
-"""`;
-
-  return { prompt, isArabicTarget };
+"""`.trim()
+  };
 }
 
 /**
@@ -102,7 +177,7 @@ ${transcript.slice(0, 30000)}
  */
 async function summarizeGemini(transcript, apiKey, language, videoTitle, summaryLevel, summaryFormat) {
   const { prompt } = buildPrompt(transcript, language, videoTitle, summaryLevel, summaryFormat);
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -113,7 +188,7 @@ async function summarizeGemini(transcript, apiKey, language, videoTitle, summary
       }],
       generationConfig: {
         temperature: 0.3,
-        maxOutputTokens: 1000
+        maxOutputTokens: getMaxTokens(summaryLevel)
       }
     })
   });
@@ -146,7 +221,7 @@ async function summarizeOpenAI(transcript, apiKey, language, videoTitle, summary
       model: 'gpt-4o-mini',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-      max_tokens: 1000
+      max_tokens: getMaxTokens(summaryLevel)
     })
   });
 
@@ -178,7 +253,7 @@ async function summarizeGroq(transcript, apiKey, language, videoTitle, summaryLe
       model: 'llama-3.3-70b-versatile',
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.3,
-      max_tokens: 1000
+      max_tokens: getMaxTokens(summaryLevel)
     })
   });
 
@@ -210,7 +285,7 @@ async function summarizeAnthropic(transcript, apiKey, language, videoTitle, summ
     },
     body: JSON.stringify({
       model: 'claude-3-5-haiku-20241022',
-      max_tokens: 1000,
+      max_tokens: getMaxTokens(summaryLevel),
       messages: [{ role: 'user', content: prompt }]
     })
   });
@@ -233,7 +308,7 @@ async function summarizeAnthropic(transcript, apiKey, language, videoTitle, summ
 async function summarizeOpenRouter(transcript, apiKey, language, videoTitle, summaryLevel, summaryFormat) {
   const { prompt } = buildPrompt(transcript, language, videoTitle, summaryLevel, summaryFormat);
 
-  const modelsToTry = ['google/gemini-flash-latest', 'google/gemini-2.5-flash'];
+  const modelsToTry = ['~google/gemini-flash-latest', 'google/gemini-flash-latest', 'google/gemini-2.5-flash'];
   let lastError = null;
 
   for (const model of modelsToTry) {
@@ -247,7 +322,8 @@ async function summarizeOpenRouter(transcript, apiKey, language, videoTitle, sum
         body: JSON.stringify({
           model,
           messages: [{ role: 'user', content: prompt }],
-          temperature: 0.3
+          temperature: 0.3,
+          max_tokens: getMaxTokens(summaryLevel)
         })
       });
 
