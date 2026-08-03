@@ -75,6 +75,23 @@
   top: 72px;
   max-height: calc(100vh - 88px);
   overflow: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tldw-rail) transparent;
+}
+
+#tldw-summary-container.tldw-sidebar::-webkit-scrollbar {
+  width: 8px;
+}
+
+#tldw-summary-container.tldw-sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#tldw-summary-container.tldw-sidebar::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--tldw-rail);
+  background-clip: content-box;
 }
 
 #tldw-summary-container.tldw-below-video {
@@ -348,6 +365,121 @@
   to { transform: rotate(360deg); }
 }
 
+/* Answer-first card: the promise, the verdict, and the direct answer */
+.tldw-answer-card {
+  border-inline-start: 3px solid var(--tldw-accent);
+  border-radius: 3px;
+  padding: 0 0 0 16px;
+  margin-bottom: 30px;
+  max-width: 82ch;
+}
+
+/* Label and rating share one quiet line above the takeaway */
+.tldw-answer-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 8px;
+  color: var(--tldw-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+.tldw-answer-sep {
+  opacity: 0.55;
+}
+
+.tldw-answer-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.tldw-answer-stars {
+  font-size: 10px;
+  letter-spacing: 0.5px;
+  line-height: 1;
+  opacity: 0.85;
+}
+
+.tldw-answer-rating[data-rating="3"] .tldw-answer-stars { color: #30d158; }
+.tldw-answer-rating[data-rating="2"] .tldw-answer-stars { color: #ff9f0a; }
+.tldw-answer-rating[data-rating="1"] .tldw-answer-stars { color: #ff453a; }
+
+.tldw-answer-lead {
+  font-size: 18px;
+  line-height: 1.7;
+  font-weight: 500;
+  color: var(--tldw-text-primary);
+  letter-spacing: -0.008em;
+}
+
+.tldw-answer-lead p {
+  margin: 0 0 8px;
+}
+
+.tldw-answer-lead p:last-child {
+  margin-bottom: 0;
+}
+
+/* Section heading between the takeaway and the supporting detail */
+.tldw-section-label {
+  margin: 0 0 8px;
+  color: var(--tldw-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  font-size: 10.5px;
+  font-weight: 700;
+}
+
+#tldw-summary-container.tldw-sidebar .tldw-answer-card {
+  max-width: none;
+  width: 100%;
+  box-sizing: border-box;
+  padding-inline-start: 12px;
+  margin-bottom: 22px;
+}
+
+#tldw-summary-container.tldw-sidebar .tldw-answer-lead {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+.tldw-q-sheet-answer .tldw-answer-card {
+  max-width: none;
+  padding-inline-start: 12px;
+  margin-bottom: 22px;
+}
+
+.tldw-q-sheet-answer .tldw-answer-lead {
+  font-size: 15px;
+  line-height: 1.65;
+}
+
+/* Verdict stars on a timeline row, in place of the progress subline */
+.tldw-q-row-rating {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: 1px;
+  line-height: 1.4;
+  color: var(--tldw-text-tertiary);
+}
+
+.tldw-q-row-rating[data-rating="3"] { color: #30d158; }
+.tldw-q-row-rating[data-rating="2"] { color: #ff9f0a; }
+.tldw-q-row-rating[data-rating="1"] { color: #ff453a; }
+
+/* At level 1 the lead is the whole summary, so the body box has nothing in it */
+.tldw-summary-text:empty,
+.tldw-q-sheet-summary:empty,
+.tldw-q-sheet-answer:empty {
+  display: none;
+}
+
 /* Rendered Markdown Output Formatting */
 .tldw-summary-text {
   background: var(--tldw-summary-bg);
@@ -506,15 +638,27 @@
 }
 
 .tldw-summary-text ul, .tldw-summary-text ol {
-  margin: 14px 0 14px 1.1em;
+  margin: 14px 0;
   padding: 0;
+  padding-inline-start: 1.05em;
   list-style-position: outside;
 }
 
+.tldw-summary-text > ul:first-child,
+.tldw-summary-text > ol:first-child {
+  margin-top: 0;
+}
+
 .tldw-summary-text li {
-  padding-left: 0.25em;
-  margin-bottom: 11px;
+  padding-inline-start: 0.15em;
+  margin-bottom: 12px;
   line-height: 1.68;
+}
+
+/* Hairlines between points so a long list reads as separate items */
+.tldw-summary-text li + li {
+  padding-top: 12px;
+  border-top: 1px solid var(--tldw-border);
 }
 
 .tldw-summary-text li:last-child {
@@ -524,13 +668,17 @@
 #tldw-summary-container.tldw-sidebar .tldw-summary-text ul,
 #tldw-summary-container.tldw-sidebar .tldw-summary-text ol {
   margin: 10px 0;
-  padding-inline-start: 1.05em;
+  padding-inline-start: 1em;
 }
 
 #tldw-summary-container.tldw-sidebar .tldw-summary-text li {
-  padding-left: 0.05em;
-  margin-bottom: 8px;
+  padding-inline-start: 0.1em;
+  margin-bottom: 9px;
   line-height: 1.72;
+}
+
+#tldw-summary-container.tldw-sidebar .tldw-summary-text li + li {
+  padding-top: 9px;
 }
 
 .tldw-summary-text code {
@@ -1329,10 +1477,55 @@
 .tldw-q-sheet-body {
   flex: 1 1 auto;
   overflow: auto;
-  padding: 2px 16px 12px;
+  /* Bottom padding keeps the last line clear of the action bar. */
+  padding: 6px 16px 28px;
   color: var(--tldw-text-primary);
   font-size: 13px;
   line-height: 1.62;
+  scrollbar-width: thin;
+  scrollbar-color: var(--tldw-rail) transparent;
+}
+
+.tldw-q-sheet-body::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tldw-q-sheet-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tldw-q-sheet-body::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: var(--tldw-rail);
+  background-clip: content-box;
+}
+
+/* Reading progress for summaries that run past the fold */
+.tldw-q-sheet-progress {
+  flex: 0 0 auto;
+  height: 2px;
+  background: var(--tldw-border);
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.tldw-q-sheet[data-scrollable="true"] .tldw-q-sheet-progress {
+  opacity: 1;
+}
+
+.tldw-q-sheet-progress span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: var(--tldw-accent);
+  transform: scaleX(var(--tldw-q-progress, 0));
+  transform-origin: left center;
+}
+
+.tldw-rtl .tldw-q-sheet-progress span,
+[dir="rtl"] .tldw-q-sheet-progress span {
+  transform-origin: right center;
 }
 
 .tldw-q-sheet-summary p {
@@ -1343,9 +1536,25 @@
   margin-bottom: 0;
 }
 
-.tldw-q-sheet-summary ul {
-  margin: 8px 0;
-  padding-inline-start: 1.1em;
+.tldw-q-sheet-summary ul,
+.tldw-q-sheet-summary ol {
+  margin: 0;
+  padding-inline-start: 1.05em;
+}
+
+.tldw-q-sheet-summary li {
+  margin-bottom: 10px;
+  padding-inline-start: 0.15em;
+}
+
+.tldw-q-sheet-summary li:last-child {
+  margin-bottom: 0;
+}
+
+/* Hairlines between points so a long list reads as separate items */
+.tldw-q-sheet-summary li + li {
+  padding-top: 10px;
+  border-top: 1px solid var(--tldw-border);
 }
 
 .tldw-q-sheet-pending {
@@ -1403,27 +1612,89 @@
   color: var(--tldw-text-primary);
 }
 
-.tldw-q-sheet-actions .tldw-q-sheet-obsidian {
-  border-color: var(--tldw-accent);
+/* One prominent action; everything else lives in the overflow menu */
+.tldw-q-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--tldw-accent);
+  border-radius: 9px;
   background: var(--tldw-accent);
   color: #ffffff;
+  cursor: pointer;
+  font-family: var(--tldw-font-family);
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 1;
 }
 
-.tldw-q-sheet-actions .tldw-q-sheet-obsidian:hover {
-  background: var(--tldw-accent);
-  color: #ffffff;
+.tldw-q-primary:hover {
   filter: brightness(1.08);
 }
 
-.tldw-q-sheet-actions .tldw-q-sheet-remove {
+.tldw-q-primary-spacer {
+  flex: 1 1 auto;
+}
+
+.tldw-q-more {
   margin-inline-start: auto;
-  border-color: rgba(255, 77, 77, 0.28);
+  position: relative;
+}
+
+.tldw-q-more > summary {
+  list-style: none;
+  font-size: 16px;
+}
+
+.tldw-q-more > summary::-webkit-details-marker {
+  display: none;
+}
+
+.tldw-q-more-menu {
+  position: absolute;
+  inset-inline-end: 0;
+  bottom: calc(100% + 8px);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-width: 184px;
+  padding: 5px;
+  border: 1px solid var(--tldw-border);
+  border-radius: 12px;
+  background: var(--tldw-card-bg);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.34);
+}
+
+.tldw-q-more-menu > * {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--tldw-text-primary);
+  cursor: pointer;
+  font-family: var(--tldw-font-family);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: start;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.tldw-q-more-menu > *:hover {
+  background: var(--tldw-control-hover-bg);
+}
+
+.tldw-q-more-menu .tldw-q-more-danger {
   color: #ff6767;
 }
 
-.tldw-q-sheet-actions .tldw-q-sheet-remove:hover {
+.tldw-q-more-menu .tldw-q-more-danger:hover {
   background: rgba(255, 77, 77, 0.12);
-  color: #ff6767;
 }
 
 @media (prefers-reduced-motion: reduce) {

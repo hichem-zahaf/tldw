@@ -22,6 +22,7 @@ export function buildQueueItem({
     status: 'queued',
     progress: 'Queued',
     summary: '',
+    answer: null,
     transcript: '',
     error: '',
     cached: false,

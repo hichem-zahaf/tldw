@@ -1,3 +1,5 @@
+import { formatAnswerMarkdown } from './summary-answer.js';
+
 /** Safe ceiling for obsidian:// URIs before falling back to clipboard content. */
 export const OBSIDIAN_URI_SAFE_LENGTH = 12000;
 
@@ -60,25 +62,32 @@ export function buildObsidianNoteMarkdown({
   videoTitle,
   videoUrl,
   summary,
+  videoType = '',
   highlight = '',
   date
 } = {}) {
   const title = String(videoTitle || '').trim() || 'Untitled';
   const dateStr = date || formatObsidianDate();
   const sourceUrl = String(videoUrl || '').trim();
+
+  // Highlight first, so a selection that landed in the lead still matches
+  // before the answer block is split into sections.
   const summaryText = applyInlineHighlight(
     String(summary || '').trim(),
     highlight
   );
+
+  const bodyMarkdown = formatAnswerMarkdown(summaryText, videoType);
 
   // No H1: the filename is the note title, and Obsidian renders it inline.
   const lines = [
     `Watched: [[${dateStr}]]`,
     sourceUrl ? `Source: [${title}](${sourceUrl})` : `Source: ${title}`,
     '',
-    '## Summary',
-    '',
-    summaryText,
+    // formatAnswerMarkdown already emits its own headings when the summary
+    // carries an answer block.
+    ...(bodyMarkdown.startsWith('#') ? [] : ['## Summary', '']),
+    bodyMarkdown,
     ''
   ];
 
@@ -130,6 +139,7 @@ export function planObsidianExport({
   videoId = '',
   videoUrl = '',
   summary = '',
+  videoType = '',
   highlight = '',
   date,
   safeUriLength = OBSIDIAN_URI_SAFE_LENGTH
@@ -139,6 +149,7 @@ export function planObsidianExport({
     videoTitle,
     videoUrl,
     summary,
+    videoType,
     highlight,
     date
   });

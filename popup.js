@@ -2,6 +2,7 @@ let currentVideoId = null;
 let currentVideoUrl = '';
 let currentVideoTitle = '';
 let currentSummaryText = '';
+let currentSummaryAnswer = null;
 let activeSummaryRequestId = null;
 
 let selectedFormat = 'paragraph';
@@ -151,14 +152,16 @@ async function checkCacheOnLoad() {
 
     if (res && res.cached && res.summary) {
       currentSummaryText = res.summary;
+      currentSummaryAnswer = res.answer || null;
       const isArabic = isArabicText(res.summary);
       summaryBox.className = `summary-box ${isArabic ? 'rtl' : 'ltr'}`;
-      summaryBox.innerHTML = parseMarkdown(res.summary);
+      summaryBox.innerHTML = renderSummaryBox(res.summary, res.answer);
       summaryBox.style.display = 'block';
       updateObsidianButtonVisibility();
       showStatus('Loaded from cache!');
     } else {
       currentSummaryText = '';
+      currentSummaryAnswer = null;
       updateObsidianButtonVisibility();
       showStatus('Ready to summarize. Click "✨ Summarize".');
     }
@@ -201,9 +204,10 @@ async function triggerSummary(forceRefresh = false) {
     }
 
     currentSummaryText = response.summary || '';
+    currentSummaryAnswer = response.answer || null;
     const isArabic = isArabicText(response.summary);
     summaryBox.className = `summary-box ${isArabic ? 'rtl' : 'ltr'}`;
-    summaryBox.innerHTML = parseMarkdown(response.summary);
+    summaryBox.innerHTML = renderSummaryBox(response.summary, response.answer);
     summaryBox.style.display = 'block';
     updateObsidianButtonVisibility();
 
@@ -217,6 +221,62 @@ async function triggerSummary(forceRefresh = false) {
     }
     if (summarizeBtn) summarizeBtn.disabled = false;
   }
+}
+
+// Mirrors renderStars/getRatingLabel in summary-answer.js; the popup is a
+// classic script and cannot import the module.
+function answerStars(rating) {
+  const value = Math.max(0, Math.min(3, Number(rating) || 0));
+  if (!value) return '';
+  return '★'.repeat(value) + '☆'.repeat(3 - value);
+}
+
+function answerRatingLabel(rating, videoType) {
+  const asksQuestion = videoType === 'question';
+  if (rating >= 3) return asksQuestion ? 'Answers it' : 'Delivers';
+  if (rating === 2) return asksQuestion ? 'Partly answers it' : 'Partly delivers';
+  if (rating === 1) return asksQuestion ? 'Never answers it' : "Doesn't deliver";
+  return '';
+}
+
+function renderSummaryBox(summary, answer) {
+  if (!answer?.hasHeader || !answer.lead) return parseMarkdown(summary);
+
+  const rating = Number(answer.rating) || 0;
+  const label = answerRatingLabel(rating, answer.videoType);
+
+  const verdict = rating
+    ? `<span class="answer-sep" aria-hidden="true">·</span>
+       <span class="answer-rating" data-rating="${rating}" role="img"
+             aria-label="${escapeHTML(label)}, ${rating} out of 3">
+         <span class="answer-stars" aria-hidden="true">${answerStars(rating)}</span>
+         <span>${escapeHTML(label)}</span>
+       </span>`
+    : '';
+
+  const sectionLabel = answer.body.trim()
+    ? `<div class="section-label">${/^\s*[-*]\s+/m.test(answer.body) ? 'Key points' : 'The detail'}</div>`
+    : '';
+
+  return `
+    <div class="answer-card">
+      <div class="answer-head">
+        <span>Core takeaway</span>
+        ${verdict}
+      </div>
+      <div class="answer-lead">${parseMarkdown(answer.lead)}</div>
+    </div>
+    ${sectionLabel}
+    ${parseMarkdown(answer.body)}
+  `;
+}
+
+function escapeHTML(str) {
+  return (str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }
 
 function parseMarkdown(md) {
@@ -336,7 +396,8 @@ async function savePopupSummaryToObsidian() {
       videoId: currentVideoId,
       videoTitle: currentVideoTitle,
       videoUrl: currentVideoUrl,
-      summary: currentSummaryText
+      summary: currentSummaryText,
+      videoType: currentSummaryAnswer?.videoType || ''
     });
 
     if (!response?.success || !response.uri) {

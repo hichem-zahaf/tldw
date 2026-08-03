@@ -491,8 +491,12 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
     setWatchSummaryDirection(isArabic);
 
     // Render Formatted Markdown Summary
+    const answer = response.answer;
+    const summaryBody = answer?.hasHeader ? answer.body : response.summary;
     bodyEl.innerHTML = `
-      <div class="tldw-summary-text" data-tldw-obsidian-source="watch">${parseMarkdown(response.summary)}</div>
+      ${renderAnswerCard(answer, 'data-tldw-obsidian-source="watch"')}
+      ${renderBodySectionLabel(answer, summaryBody)}
+      <div class="tldw-summary-text" data-tldw-obsidian-source="watch">${parseMarkdown(summaryBody)}</div>
       <div class="tldw-obsidian-hint" id="tldw-obsidian-hint" style="display:none;">
         <span aria-hidden="true">✦</span>
         <span>Select any text above to save it as a highlight in Obsidian.</span>
@@ -558,7 +562,7 @@ function toggleTranscriptBox() {
  */
 function copySummaryToClipboard() {
   if (!currentSummaryData?.summary) return;
-  navigator.clipboard.writeText(currentSummaryData.summary).then(() => {
+  navigator.clipboard.writeText(summaryClipboardText(currentSummaryData)).then(() => {
     const btn = document.getElementById('tldw-copy-btn');
     if (btn) {
       const origText = btn.innerHTML;
@@ -596,6 +600,7 @@ async function saveWatchSummaryToObsidian(mode, highlight = '') {
       videoTitle: getWatchVideoTitle(),
       videoUrl: window.location.href,
       summary: currentSummaryData.summary,
+      videoType: currentSummaryData.answer?.videoType || '',
       highlight
     });
     const label = btn?.querySelector('.tldw-obsidian-btn-label');
@@ -618,6 +623,7 @@ async function saveSummaryToObsidian({
   videoTitle,
   videoUrl,
   summary,
+  videoType = '',
   highlight = ''
 }) {
   if (!isObsidianExportReady()) {
@@ -631,6 +637,7 @@ async function saveSummaryToObsidian({
     videoTitle,
     videoUrl,
     summary,
+    videoType,
     highlight
   });
 
@@ -697,7 +704,8 @@ function resolveObsidianContext(source, queueId) {
       videoId: item.videoId,
       videoTitle: item.videoTitle || item.videoId,
       videoUrl: item.videoUrl || `https://www.youtube.com/watch?v=${item.videoId}`,
-      summary: item.summary
+      summary: item.summary,
+      videoType: item.answer?.videoType || ''
     };
   }
 
@@ -706,7 +714,8 @@ function resolveObsidianContext(source, queueId) {
     videoId: currentVideoId,
     videoTitle: getWatchVideoTitle(),
     videoUrl: window.location.href,
-    summary: currentSummaryData.summary
+    summary: currentSummaryData.summary,
+    videoType: currentSummaryData.answer?.videoType || ''
   };
 }
 
@@ -1088,6 +1097,9 @@ function injectSummaryQueueWidget() {
   document.body.appendChild(widget);
 
   widget.addEventListener('click', handleSummaryQueueClick);
+  // Capture, because scroll does not bubble and the sheet body is replaced on
+  // every render.
+  widget.addEventListener('scroll', handleQueueSheetScroll, true);
   document.addEventListener('keydown', handleSummaryQueueKeydown, true);
 
   renderSummaryQueueWidget();
@@ -1100,6 +1112,10 @@ async function handleSummaryQueueClick(e) {
 
   const action = actionEl.dataset.tldwQueueAction;
   const id = actionEl.dataset.queueId;
+
+  // Any action dismisses the overflow menu, including one taken outside it.
+  document.querySelectorAll('#tldw-summary-queue-widget .tldw-q-more[open]')
+    .forEach(menu => { menu.open = false; });
 
   if (action === 'toggle') {
     isSummaryQueueOpen = !isSummaryQueueOpen;
@@ -1155,7 +1171,7 @@ async function handleSummaryQueueClick(e) {
   if (!item) return;
 
   if (action === 'copy' && item.summary) {
-    await navigator.clipboard.writeText(item.summary);
+    await navigator.clipboard.writeText(summaryClipboardText(item));
     flashQueueActionGlyph(actionEl, '✓');
     return;
   }
@@ -1170,6 +1186,7 @@ async function handleSummaryQueueClick(e) {
         videoTitle: item.videoTitle || item.title || item.videoId,
         videoUrl: item.videoUrl || `https://www.youtube.com/watch?v=${item.videoId}`,
         summary: item.summary,
+        videoType: item.answer?.videoType || '',
         highlight
       });
       flashQueueActionGlyph(actionEl, '✓');
@@ -1209,6 +1226,25 @@ async function handleSummaryQueueClick(e) {
 }
 
 /** Swaps an icon button's glyph, returning a callback that puts the original back. */
+function handleQueueSheetScroll(e) {
+  if (!e.target?.classList?.contains('tldw-q-sheet-body')) return;
+  updateQueueSheetProgress(e.target);
+}
+
+// Long summaries scroll well past the fold, so the sheet shows how far in you
+// are. The bar hides itself when everything already fits.
+function updateQueueSheetProgress(body) {
+  const sheet = body.closest('.tldw-q-sheet');
+  if (!sheet) return;
+
+  const scrollable = body.scrollHeight - body.clientHeight;
+  sheet.dataset.scrollable = String(scrollable > 24);
+  sheet.style.setProperty(
+    '--tldw-q-progress',
+    scrollable > 0 ? String(Math.min(1, Math.max(0, body.scrollTop / scrollable))) : '0'
+  );
+}
+
 function setQueueActionGlyph(actionEl, glyph) {
   const target = actionEl.querySelector('span') || actionEl;
   const original = target.textContent;
@@ -1381,6 +1417,9 @@ function renderSummaryQueueWidget(focusedId = '') {
   const timeline = widget.querySelector('.tldw-q-timeline');
   if (timeline) timeline.scrollTop = scrollTop;
 
+  const sheetBody = widget.querySelector('.tldw-q-sheet-body');
+  if (sheetBody) updateQueueSheetProgress(sheetBody);
+
   if (focusedId) {
     const row = widget.querySelector(`.tldw-q-row[data-queue-id="${CSS.escape(focusedId)}"]`);
     row?.classList.add('tldw-q-row-focused');
@@ -1469,7 +1508,7 @@ function renderQueueRow(item, ts) {
     ? (item.error || 'Failed')
     : (item.progress || getSummaryQueueStatusLabel(item));
   const subline = status === 'done'
-    ? ''
+    ? renderAnswerBadge(item.answer)
     : `<span class="tldw-q-row-sub">${escapeHTML(sublineText)}</span>`;
   const thumb = item.videoId
     ? `<img class="tldw-q-thumb" alt="" loading="lazy" src="https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/default.jpg">`
@@ -1505,11 +1544,15 @@ function renderQueueSheet(item) {
     ? `--tldw-q-art:url('https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg')`
     : '';
 
+  const sheetSource = `data-tldw-obsidian-source="queue" data-queue-id="${id}"`;
+  const dir = isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr';
+  const summaryBody = item.answer?.hasHeader ? item.answer.body : item.summary;
   const body = item.status === 'error'
     ? `<div class="tldw-summary-queue-error">${escapeHTML(item.error || 'Summary failed.')}</div>`
     : item.summary
-      ? `<div class="tldw-q-sheet-summary ${isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr'}"
-              data-tldw-obsidian-source="queue" data-queue-id="${id}">${parseMarkdown(item.summary)}</div>
+      ? `<div class="tldw-q-sheet-answer ${dir}">${renderAnswerCard(item.answer, sheetSource)}</div>
+         ${renderBodySectionLabel(item.answer, summaryBody)}
+         <div class="tldw-q-sheet-summary ${dir}" ${sheetSource}>${parseMarkdown(summaryBody)}</div>
          ${isObsidianExportReady()
            ? '<div class="tldw-obsidian-hint"><span aria-hidden="true">✦</span><span>Select any text above to save it as a highlight.</span></div>'
            : ''}`
@@ -1527,26 +1570,39 @@ function renderQueueSheet(item) {
         </div>
       </div>
     </header>
+    <div class="tldw-q-sheet-progress" aria-hidden="true"><span></span></div>
     <div class="tldw-q-sheet-body">${body}</div>
     <footer class="tldw-q-sheet-actions">
-      ${item.summary
-        ? `<button class="tldw-q-act" type="button" data-tldw-queue-action="copy" data-queue-id="${id}"
-                   title="Copy summary" aria-label="Copy summary"><span aria-hidden="true">⧉</span></button>`
-        : ''}
-      ${item.summary && isObsidianExportReady()
-        ? `<button class="tldw-q-act tldw-q-sheet-obsidian" type="button" data-tldw-queue-action="obsidian" data-queue-id="${id}"
-                   title="Save to Obsidian" aria-label="Save summary to Obsidian"><span aria-hidden="true">✦</span></button>`
-        : ''}
-      ${item.status === 'error'
-        ? `<button class="tldw-q-act" type="button" data-tldw-queue-action="retry" data-queue-id="${id}"
-                   title="Retry summary" aria-label="Retry summary"><span aria-hidden="true">↻</span></button>`
-        : ''}
-      <a class="tldw-q-act" href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer"
-         title="Open video on YouTube" aria-label="Open video on YouTube"><span aria-hidden="true">▶</span></a>
-      <button class="tldw-q-act tldw-q-sheet-remove" type="button" data-tldw-queue-action="remove" data-queue-id="${id}"
-              title="Remove from queue" aria-label="Remove from queue"><span aria-hidden="true">✕</span></button>
+      ${renderQueueSheetPrimaryAction(item, id)}
+      <details class="tldw-q-more">
+        <summary class="tldw-q-act" title="More actions" aria-label="More actions"><span aria-hidden="true">⋯</span></summary>
+        <div class="tldw-q-more-menu" role="menu">
+          ${item.summary && isObsidianExportReady()
+            ? `<button type="button" role="menuitem" data-tldw-queue-action="obsidian" data-queue-id="${id}">
+                 <span aria-hidden="true">✦</span> Save to Obsidian</button>`
+            : ''}
+          <a role="menuitem" href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">
+            <span aria-hidden="true">▶</span> Open on YouTube</a>
+          <button type="button" role="menuitem" class="tldw-q-more-danger"
+                  data-tldw-queue-action="remove" data-queue-id="${id}">
+            <span aria-hidden="true">✕</span> Remove from queue</button>
+        </div>
+      </details>
     </footer>
   `;
+}
+
+// One prominent action: whatever the reader most likely came here to do.
+function renderQueueSheetPrimaryAction(item, id) {
+  if (item.status === 'error') {
+    return `<button class="tldw-q-primary" type="button" data-tldw-queue-action="retry" data-queue-id="${id}">
+              <span aria-hidden="true">↻</span> Retry summary</button>`;
+  }
+
+  if (!item.summary) return '<span class="tldw-q-primary-spacer"></span>';
+
+  return `<button class="tldw-q-primary" type="button" data-tldw-queue-action="copy" data-queue-id="${id}">
+            <span aria-hidden="true">⧉</span> Copy summary</button>`;
 }
 
 function matchesQueueFilter(item) {
@@ -1631,6 +1687,83 @@ function getSummaryQueueStatusLabel(item) {
   if (item.status === 'error') return 'Failed';
   if (item.status === 'running') return 'Running';
   return 'Queued';
+}
+
+// Mirrors renderStars/getRatingLabel in summary-answer.js; content scripts
+// cannot import it. The parsing itself happens in the background worker, so
+// only the display helpers are duplicated here.
+function answerStars(rating) {
+  const value = Math.max(0, Math.min(3, Number(rating) || 0));
+  if (!value) return '';
+  return '★'.repeat(value) + '☆'.repeat(3 - value);
+}
+
+function answerRatingLabel(rating, videoType) {
+  const asksQuestion = videoType === 'question';
+  if (rating >= 3) return asksQuestion ? 'Answers it' : 'Delivers';
+  if (rating === 2) return asksQuestion ? 'Partly answers it' : 'Partly delivers';
+  if (rating === 1) return asksQuestion ? 'Never answers it' : "Doesn't deliver";
+  return '';
+}
+
+function renderAnswerCard(answer, sourceAttrs = '') {
+  if (!answer || !answer.hasHeader || !answer.lead) return '';
+
+  const rating = Number(answer.rating) || 0;
+  const label = answerRatingLabel(rating, answer.videoType);
+
+  // The hook only survives in copy and export output; on screen the takeaway
+  // itself has to carry the point.
+  const verdict = rating
+    ? `<span class="tldw-answer-sep" aria-hidden="true">·</span>
+       <span class="tldw-answer-rating" data-rating="${rating}" role="img"
+             aria-label="${escapeHTML(label)}, ${rating} out of 3">
+         <span class="tldw-answer-stars" aria-hidden="true">${answerStars(rating)}</span>
+         <span class="tldw-answer-rating-label">${escapeHTML(label)}</span>
+       </span>`
+    : '';
+
+  return `
+    <div class="tldw-answer-card">
+      <div class="tldw-answer-head">
+        <span class="tldw-answer-eyebrow">Core takeaway</span>
+        ${verdict}
+      </div>
+      <div class="tldw-answer-lead" ${sourceAttrs}>${parseMarkdown(answer.lead)}</div>
+    </div>
+  `;
+}
+
+// Bullet bodies get a "Key points" heading; prose bodies read as continuation.
+function renderBodySectionLabel(answer, body) {
+  if (!answer?.hasHeader || !answer.lead || !body.trim()) return '';
+
+  const label = /^\s*[-*]\s+/m.test(body) ? 'Key points' : 'The detail';
+  return `<div class="tldw-section-label">${label}</div>`;
+}
+
+// Mirrors formatAnswerPlainText in summary-answer.js: the HOOK/RATING/LEAD
+// labels are a prompt contract, not something to paste into a doc.
+function summaryClipboardText(source) {
+  const answer = source?.answer;
+  if (!answer?.hasHeader) return source?.summary || '';
+
+  const verdict = answer.rating
+    ? `${answerStars(answer.rating)} ${answerRatingLabel(answer.rating, answer.videoType)}`
+    : '';
+
+  return [answer.hook, verdict, answer.lead, answer.body]
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function renderAnswerBadge(answer) {
+  const rating = Number(answer?.rating) || 0;
+  if (!rating) return '';
+
+  const label = answerRatingLabel(rating, answer.videoType);
+  return `<span class="tldw-q-row-rating" data-rating="${rating}" title="${escapeHTML(label)}"
+                aria-label="${escapeHTML(label)}">${answerStars(rating)}</span>`;
 }
 
 /**

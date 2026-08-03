@@ -16,7 +16,8 @@ export async function generateSummary(transcript, options = {}) {
     videoTitle = '',
     summaryLevel = 3, // 1 (Ultra Short) to 5 (Deep Dive)
     summaryFormat = 'paragraph', // 'paragraph', 'bullets', 'key_takeaways'
-    promptVariant
+    promptVariant,
+    classification = null // { type, hook, hasPromise } from video-classifier.js
   } = options;
 
   if (!transcript || transcript.trim().length === 0) {
@@ -34,7 +35,8 @@ export async function generateSummary(transcript, options = {}) {
     videoTitle,
     summaryLevel,
     summaryFormat,
-    promptVariant
+    promptVariant,
+    classification
   });
 
   if (provider === 'gemini') {
@@ -169,10 +171,10 @@ async function summarizeAnthropic(prompt, apiKey, temperature) {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'Content-Type': 'application/json',
-      'dangerously-allow-browser': 'true'
+      'anthropic-dangerous-direct-browser-access': 'true'
     },
     body: JSON.stringify({
-      model: 'claude-3-5-haiku-20241022',
+      model: 'claude-haiku-4-5-20251001',
       // Anthropic requires max_tokens; omit level caps elsewhere
       max_tokens: 8192,
       temperature,

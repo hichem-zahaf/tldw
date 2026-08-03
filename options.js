@@ -7,6 +7,7 @@ const DEFAULT_SETTINGS = {
   summaryFormat: 'paragraph',
   autoSummarizeWatch: false,
   showFeedButtons: true,
+  answerFirst: true,
   obsidianEnabled: false,
   obsidianVault: ''
 };
@@ -38,6 +39,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('auto-summarize-watch').checked = !!settings.autoSummarizeWatch;
   document.getElementById('show-feed-buttons').checked = settings.showFeedButtons !== false;
+  document.getElementById('answer-first').checked = settings.answerFirst !== false;
   document.getElementById('obsidian-enabled').checked = !!settings.obsidianEnabled;
   document.getElementById('obsidian-vault').value = settings.obsidianVault || '';
 
@@ -128,6 +130,7 @@ async function saveSettings() {
     summaryFormat: currentSelectedFormat,
     autoSummarizeWatch: document.getElementById('auto-summarize-watch').checked,
     showFeedButtons: document.getElementById('show-feed-buttons').checked,
+    answerFirst: document.getElementById('answer-first').checked,
     obsidianEnabled,
     obsidianVault
   };

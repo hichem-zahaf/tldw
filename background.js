@@ -2,6 +2,12 @@ import { generateSummary } from './summarizer.js';
 import { ACTIVE_SUMMARY_PROMPT_VARIANT } from './summary-prompts.js';
 import { getSummaryProgressMessage } from './summary-progress.js';
 import {
+  buildClassificationCacheKey,
+  classifyVideo,
+  heuristicClassification
+} from './video-classifier.js';
+import { parseSummaryAnswer } from './summary-answer.js';
+import {
   SUMMARY_QUEUE_KEY,
   buildQueueItem,
   countUnreadQueueItems,
@@ -21,6 +27,7 @@ const DEFAULT_SETTINGS = {
   summaryFormat: 'paragraph', // 'paragraph', 'bullets', 'key_takeaways'
   autoSummarizeWatch: false,
   showFeedButtons: true,
+  answerFirst: true,
   obsidianEnabled: false,
   obsidianVault: ''
 };
@@ -29,6 +36,48 @@ let summaryQueueWriteLock = Promise.resolve();
 
 function buildSummaryCacheKey({ videoId, language, level, format, provider }) {
   return `summary_${videoId}_${language}_L${level}_F${format}_${provider}_P${ACTIVE_SUMMARY_PROMPT_VARIANT}`;
+}
+
+/**
+ * Classifies from thumbnail + title, caching per video. Callers start this
+ * before transcript retrieval and await it just before summarizing, so the
+ * vision call costs no wall-clock time.
+ */
+async function getVideoClassification({ videoId, videoTitle, settings }) {
+  if (!videoId) return heuristicClassification(videoTitle);
+  if (settings.answerFirst === false) return heuristicClassification(videoTitle);
+
+  const cacheKey = buildClassificationCacheKey(videoId);
+  const cached = await chrome.storage.local.get(cacheKey);
+  if (cached?.[cacheKey]?.type) return cached[cacheKey];
+
+  const classification = await classifyVideo({
+    provider: settings.aiProvider,
+    apiKey: settings.aiApiKey,
+    videoId,
+    videoTitle
+  });
+
+  // A heuristic result is a fallback, not an answer — never cache it, so the
+  // next attempt can still reach the model.
+  if (classification.source === 'model') {
+    await chrome.storage.local.set({ [cacheKey]: classification });
+  }
+
+  return classification;
+}
+
+function buildSummaryAnswer(summary, classification) {
+  const parsed = parseSummaryAnswer(summary);
+
+  return {
+    ...parsed,
+    // The classifier read the promise off the thumbnail, which is the version
+    // the reader recognizes. The summary only supplies one as a fallback.
+    hook: classification?.hook || parsed.hook,
+    videoType: classification?.type || '',
+    thumbnailText: classification?.thumbnailText || ''
+  };
 }
 
 function createSummaryProgressReporter(request, sender) {
@@ -214,6 +263,7 @@ async function handleSaveToObsidian(request) {
     videoId: request.videoId,
     videoUrl: request.videoUrl,
     summary,
+    videoType: request.videoType || '',
     highlight
   });
 
@@ -446,6 +496,7 @@ async function processSummaryQueueItem(item, forceRefresh = false) {
       progress: response.cached ? 'Loaded from cache' : 'Summary ready',
       summary: response.summary,
       transcript: response.transcript,
+      answer: response.answer || null,
       cached: !!response.cached,
       error: '',
       readAt: 0
@@ -482,10 +533,14 @@ async function handleCheckCache({ videoId, language, summaryLevel, summaryFormat
 
   const cached = await chrome.storage.local.get(cacheKey);
   if (cached && cached[cacheKey]) {
+    const classKey = buildClassificationCacheKey(videoId);
+    const classCache = await chrome.storage.local.get(classKey);
+
     return {
       cached: true,
       summary: cached[cacheKey].summary,
       transcript: cached[cacheKey].transcript,
+      answer: buildSummaryAnswer(cached[cacheKey].summary, classCache?.[classKey]),
       videoId
     };
   }
@@ -522,15 +577,24 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
   if (!forceRefresh) {
     const cached = await chrome.storage.local.get(cacheKey);
     if (cached && cached[cacheKey]) {
+      const classKey = buildClassificationCacheKey(videoId);
+      const classCache = await chrome.storage.local.get(classKey);
+
       return {
         success: true,
         summary: cached[cacheKey].summary,
         transcript: cached[cacheKey].transcript,
+        answer: buildSummaryAnswer(cached[cacheKey].summary, classCache?.[classKey]),
         cached: true,
         videoId
       };
     }
   }
+
+  // Kicked off before the transcript so the vision call overlaps Clipscript's
+  // polling. Nothing awaits it until summarization.
+  const classificationPromise = getVideoClassification({ videoId, videoTitle, settings })
+    .catch(() => heuristicClassification(videoTitle));
 
   const fullVideoUrl = videoUrl || `https://www.youtube.com/watch?v=${videoId}`;
   let transcriptText = '';
@@ -558,7 +622,8 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
   }
 
   // Step 2: Generate summary using AI provider
-  console.log(`[TL;DW] Generating summary using provider: ${settings.aiProvider}, prompt: ${ACTIVE_SUMMARY_PROMPT_VARIANT}`);
+  const classification = await classificationPromise;
+  console.log(`[TL;DW] Generating summary using provider: ${settings.aiProvider}, prompt: ${ACTIVE_SUMMARY_PROMPT_VARIANT}, type: ${classification.type} (${classification.source})`);
   onProgress('summarizing');
   const summary = await generateSummary(transcriptText, {
     provider: settings.aiProvider,
@@ -566,7 +631,8 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
     language: targetLang,
     videoTitle,
     summaryLevel: targetLevel,
-    summaryFormat: targetFormat
+    summaryFormat: targetFormat,
+    classification
   });
 
   // Step 3: Cache result
@@ -582,6 +648,7 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
     success: true,
     summary,
     transcript: transcriptText,
+    answer: buildSummaryAnswer(summary, classification),
     cached: false,
     videoId
   };
@@ -709,7 +776,7 @@ async function fetchYouTubeNativeTranscript(videoId) {
  */
 async function clearSummaryCache() {
   const all = await chrome.storage.local.get(null);
-  const cacheKeys = Object.keys(all).filter(k => k.startsWith('summary_'));
+  const cacheKeys = Object.keys(all).filter(k => k.startsWith('summary_') || k.startsWith('vclass_'));
   if (cacheKeys.length > 0) {
     await chrome.storage.local.remove(cacheKeys);
   }

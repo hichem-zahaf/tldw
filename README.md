@@ -7,6 +7,7 @@
 ## ✨ Features
 
 - 🎯 **Embedded Summary Box**: Injects a clean, native-feeling summary card right above the description on any YouTube video (`youtube.com/watch?v=...`).
+- ⭐ **Answer-First Summaries**: Reads the thumbnail and title to work out what the video promised, then leads with the answer and rates how well the video delivers on a 1–3 star scale. Videos that promise nothing specific (vlogs, music, comedy) just get a plain summary. Toggle it off in Settings to skip the image call.
 - ⚡ **Batch Feed Summaries**: Adds a `⚡ Summarize` button under thumbnails across YouTube Home, Search, and Recommendations, then tracks queued/running/done summaries in a persistent top-right queue.
 - 🎚️ **5-Level Detail Slider**: Tailor summary depth on the fly:
   - **Level 1 (TL;DR)**: 1-sentence executive summary
@@ -21,7 +22,7 @@
   - **Google Gemini 1.5 Flash** *(Recommended — Free API key from Google AI Studio)*
   - **OpenAI GPT-4o-mini**
   - **Groq (Llama 3.3 70B)**
-  - **Anthropic Claude 3.5 Haiku**
+  - **Anthropic Claude Haiku 4.5**
   - **OpenRouter** *(Gemini 2.5 Flash / Flash Latest)*
 - ⚡ **Instant Caching**: Saves generated summaries in extension storage to prevent redundant API calls and save quota.
 - 📄 **Full Transcript Inspector**: View the raw transcript in a collapsible inspector pane whenever you want to dig into the source text.
@@ -67,6 +68,9 @@ tldw/
 ├── manifest.json       # Manifest V3 extension configuration
 ├── background.js       # Background service worker (Clipscript API, caching)
 ├── summarizer.js       # AI summarization module (Gemini, OpenAI, Groq, Anthropic, OpenRouter)
+├── summary-prompts.js  # Prompt variants, per-video-type profiles, answer block contract
+├── video-classifier.js # Thumbnail + title classification (video type, promise, hook)
+├── summary-answer.js   # Parses the answer block out of a summary, formats it for copy/export
 ├── content.js          # Injected content script for YouTube watch page & feed cards
 ├── content.css         # Styling for embedded YouTube UI elements
 ├── popup.html          # Toolbar extension popup UI

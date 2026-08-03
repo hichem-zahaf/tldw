@@ -78,6 +78,25 @@ import {
 }
 
 {
+  const md = buildObsidianNoteMarkdown({
+    videoTitle: 'Demo Video',
+    videoUrl: 'https://youtu.be/abc123',
+    summary: 'HOOK: Does it work?\nRATING: 2\nLEAD: Partly, and only above 40C.\n---\n- Detail one.',
+    videoType: 'question',
+    highlight: 'only above 40C',
+    date: '2026-08-03'
+  });
+
+  assert.match(md, /## The question\n\n> Does it work\?/);
+  assert.match(md, /\*\*Verdict:\*\* ★★☆ Partly answers it \(2\/3\)/);
+  // Highlighting happens before the block is split, so a selection in the lead
+  // still lands in the right section.
+  assert.match(md, /## The answer\n\nPartly, and ==only above 40C==\./);
+  assert.match(md, /## Summary\n\n- Detail one\.\n$/);
+  assert.doesNotMatch(md, /HOOK:|RATING:|LEAD:/);
+}
+
+{
   assert.equal(
     buildObsidianOpenVaultUri('My Vault'),
     'obsidian://open?vault=My%20Vault'
