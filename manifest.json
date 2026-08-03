@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "TL;DW - YouTube AI Summarizer",
   "version": "1.0.0",
-  "description": "Summarize YouTube videos in a single paragraph using Clipscript.uk transcripts and AI.",
+  "description": "Summarize YouTube videos with configurable AI providers, formats, languages, detail levels, and batch queues.",
   "permissions": [
     "storage",
     "activeTab"
@@ -32,6 +32,7 @@
     "default_popup": "popup.html",
     "default_icon": {
       "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     }
@@ -39,6 +40,7 @@
   "options_page": "options.html",
   "icons": {
     "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   }

@@ -51,7 +51,7 @@ chrome.runtime.onInstalled.addListener(async () => {
   const current = await chrome.storage.local.get(null);
   const newSettings = { ...DEFAULT_SETTINGS, ...current };
   await chrome.storage.local.set(newSettings);
-  console.log('[TL;DW] Extension initialized with settings:', newSettings);
+  console.log('[TL;DW] Extension initialized.');
 });
 
 // Message handling
