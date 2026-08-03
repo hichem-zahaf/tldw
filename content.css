@@ -575,6 +575,28 @@
   -webkit-backdrop-filter: blur(12px);
 }
 
+.tldw-feed-pill-portal {
+  position: fixed;
+  left: 0;
+  top: 0;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px) scale(0.98);
+}
+
+.tldw-feed-pill-portal.tldw-feed-pill-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition-delay: 0s;
+}
+
+.tldw-feed-pill-portal.tldw-feed-pill-visible:hover {
+  transform: translateY(0) scale(1.03);
+}
+
 @media (hover: hover) and (pointer: fine) {
   .tldw-feed-card-enhanced .tldw-feed-pill {
     opacity: 0;

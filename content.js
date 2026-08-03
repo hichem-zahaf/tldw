@@ -14,6 +14,9 @@ let summaryQueue = [];
 let isSummaryQueueOpen = false;
 let contentSettingsLoaded = false;
 const collapsedSummaryQueueItemIds = new Set();
+const feedCardContexts = new WeakMap();
+let activeFeedCard = null;
+let feedPillHideTimer = null;
 
 const SUMMARY_QUEUE_KEY = 'tldw_summary_queue';
 
@@ -514,35 +517,22 @@ function enhanceFeedCards() {
     .filter(card => !card.querySelector(FEED_CARD_SELECTOR));
 
   cards.forEach(card => {
-    const existingPill = Array.from(card.querySelectorAll('.tldw-feed-pill'))
-      .find(pill => pill.closest(FEED_CARD_SELECTOR) === card);
-    if (existingPill) {
-      markFeedCardEnhanced(card);
-      return;
-    }
-
     const titleLink = getFeedCardTitleLink(card);
     if (!titleLink || !titleLink.href) return;
 
     const videoId = extractVideoId(titleLink.href);
     if (!videoId) return;
 
-    const pill = document.createElement('button');
-    pill.className = 'tldw-feed-pill';
-    pill.dataset.videoId = videoId;
-    pill.innerHTML = '⚡ Summarize';
-    pill.title = 'Add this video to the TL;DW summary queue';
-
-    pill.addEventListener('click', (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      handleFeedCardSummary(card, videoId, titleLink.href, pill, getFeedCardVideoTitle(card, titleLink));
+    feedCardContexts.set(card, {
+      videoId,
+      videoUrl: titleLink.href,
+      videoTitle: getFeedCardVideoTitle(card, titleLink)
     });
 
     markFeedCardEnhanced(card);
-    insertFeedPill(card, pill);
   });
 
+  ensureFeedPillPortal();
   updateFeedPillStates();
 }
 
@@ -552,24 +542,82 @@ function markFeedCardEnhanced(card) {
   if (card.dataset.tldwHoverBound === 'true') return;
   card.dataset.tldwHoverBound = 'true';
 
-  let hideTimer = null;
-
   card.addEventListener('mouseenter', () => {
-    clearTimeout(hideTimer);
-    card.classList.add('tldw-feed-card-active');
+    showFeedPillForCard(card);
   });
   card.addEventListener('mouseleave', () => {
-    hideTimer = setTimeout(() => {
-      card.classList.remove('tldw-feed-card-active');
-    }, 120);
+    hideFeedPillSoon();
   });
   card.addEventListener('focusin', () => {
-    clearTimeout(hideTimer);
-    card.classList.add('tldw-feed-card-active');
+    showFeedPillForCard(card);
   });
   card.addEventListener('focusout', () => {
-    card.classList.remove('tldw-feed-card-active');
+    hideFeedPillSoon();
   });
+}
+
+function ensureFeedPillPortal() {
+  let pill = document.getElementById('tldw-feed-pill-portal');
+  if (pill || !document.body) return pill;
+
+  pill = document.createElement('button');
+  pill.id = 'tldw-feed-pill-portal';
+  pill.className = 'tldw-feed-pill tldw-feed-pill-overlay tldw-feed-pill-portal';
+  pill.type = 'button';
+  pill.textContent = '⚡ Summarize';
+  pill.title = 'Add this video to the TL;DW summary queue';
+
+  pill.addEventListener('mouseenter', () => clearTimeout(feedPillHideTimer));
+  pill.addEventListener('mouseleave', hideFeedPillSoon);
+  pill.addEventListener('focusin', () => clearTimeout(feedPillHideTimer));
+  pill.addEventListener('focusout', hideFeedPillSoon);
+  pill.addEventListener('click', (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const context = activeFeedCard && feedCardContexts.get(activeFeedCard);
+    if (!context) return;
+
+    handleFeedCardSummary(
+      activeFeedCard,
+      context.videoId,
+      context.videoUrl,
+      pill,
+      context.videoTitle
+    );
+  });
+
+  document.body.appendChild(pill);
+  return pill;
+}
+
+function showFeedPillForCard(card) {
+  const context = feedCardContexts.get(card);
+  const pill = ensureFeedPillPortal();
+  if (!context || !pill) return;
+
+  clearTimeout(feedPillHideTimer);
+  activeFeedCard?.classList.remove('tldw-feed-card-active');
+  activeFeedCard = card;
+  activeFeedCard.classList.add('tldw-feed-card-active');
+
+  const anchor = getFeedCardThumbnail(card) || card;
+  const bounds = anchor.getBoundingClientRect();
+  pill.style.left = `${Math.round(bounds.left + 10)}px`;
+  pill.style.top = `${Math.round(bounds.top + 10)}px`;
+  pill.dataset.videoId = context.videoId;
+  updateFeedPillStates();
+  pill.classList.add('tldw-feed-pill-visible');
+}
+
+function hideFeedPillSoon() {
+  clearTimeout(feedPillHideTimer);
+  feedPillHideTimer = setTimeout(() => {
+    const pill = document.getElementById('tldw-feed-pill-portal');
+    pill?.classList.remove('tldw-feed-pill-visible');
+    activeFeedCard?.classList.remove('tldw-feed-card-active');
+    activeFeedCard = null;
+  }, 120);
 }
 
 function getFeedCardTitleLink(card) {
@@ -617,45 +665,15 @@ function cleanFeedCardTitle(rawTitle) {
     .trim();
 }
 
-function insertFeedPill(card, pill) {
-  const thumbnail =
+function getFeedCardThumbnail(card) {
+  return (
     card.querySelector('yt-thumbnail-view-model') ||
     card.querySelector('.yt-thumbnail-view-model') ||
     card.querySelector('ytd-thumbnail') ||
     card.querySelector('a#thumbnail')?.parentElement ||
     card.querySelector('a[href*="/watch"] img')?.parentElement ||
-    card.querySelector('#thumbnail');
-
-  if (thumbnail) {
-    pill.classList.add('tldw-feed-pill-overlay');
-    // YouTube replaces the thumbnail's internal DOM when its hover preview
-    // starts. Keep the action on the stable card so it survives that swap.
-    card.style.position = card.style.position || 'relative';
-    card.appendChild(pill);
-    return;
-  }
-
-  const details =
-    card.querySelector('#details') ||
-    card.querySelector('.details') ||
-    card.querySelector('ytd-rich-grid-media #meta');
-
-  if (details) {
-    details.appendChild(pill);
-    return;
-  }
-
-  const metadataBlock =
-    card.querySelector('ytd-video-meta-block') ||
-    card.querySelector('#metadata-line') ||
-    card.querySelector('.title-wrapper');
-
-  if (metadataBlock?.parentElement) {
-    metadataBlock.parentElement.insertBefore(pill, metadataBlock.nextSibling);
-    return;
-  }
-
-  card.appendChild(pill);
+    card.querySelector('#thumbnail')
+  );
 }
 
 /**
@@ -778,10 +796,6 @@ function injectSummaryQueueWidget() {
     const item = summaryQueue.find(queueItem => queueItem.id === id);
     if (!item) return;
 
-    if (action === 'toggle-summary' && e.target.closest('a, button')) {
-      return;
-    }
-
     if (action === 'copy' && item.summary) {
       await navigator.clipboard.writeText(item.summary);
       const originalText = actionEl.textContent;
@@ -793,11 +807,23 @@ function injectSummaryQueueWidget() {
     }
 
     if (action === 'toggle-summary') {
-      if (collapsedSummaryQueueItemIds.has(id)) {
+      const isCollapsed = collapsedSummaryQueueItemIds.has(id);
+      const isLinkClick = Boolean(e.target.closest('a'));
+
+      if (isCollapsed) {
+        if (isLinkClick) {
+          e.preventDefault();
+        }
         collapsedSummaryQueueItemIds.delete(id);
-      } else {
-        collapsedSummaryQueueItemIds.add(id);
+        renderSummaryQueueWidget(id);
+        return;
       }
+
+      if (isLinkClick) {
+        return;
+      }
+
+      collapsedSummaryQueueItemIds.add(id);
       renderSummaryQueueWidget(id);
       return;
     }
