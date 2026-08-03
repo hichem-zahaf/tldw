@@ -506,8 +506,12 @@ function enhanceFeedCards() {
   const cards = document.querySelectorAll(cardSelectors.join(','));
 
   cards.forEach(card => {
-    if (card.querySelector('.tldw-feed-pill')) {
-      card.classList.add('tldw-feed-card-enhanced');
+    const existingPill = card.querySelector('.tldw-feed-pill');
+    if (existingPill) {
+      markFeedCardEnhanced(card);
+      if (existingPill.classList.contains('tldw-feed-pill-overlay') && existingPill.parentElement !== card) {
+        insertFeedPill(card, existingPill);
+      }
       return;
     }
 
@@ -529,11 +533,37 @@ function enhanceFeedCards() {
       handleFeedCardSummary(card, videoId, titleLink.href, pill, getFeedCardVideoTitle(card, titleLink));
     });
 
-    card.classList.add('tldw-feed-card-enhanced');
+    markFeedCardEnhanced(card);
     insertFeedPill(card, pill);
   });
 
   updateFeedPillStates();
+}
+
+function markFeedCardEnhanced(card) {
+  card.classList.add('tldw-feed-card-enhanced');
+
+  if (card.dataset.tldwHoverBound === 'true') return;
+  card.dataset.tldwHoverBound = 'true';
+
+  let hideTimer = null;
+
+  card.addEventListener('mouseenter', () => {
+    clearTimeout(hideTimer);
+    card.classList.add('tldw-feed-card-active');
+  });
+  card.addEventListener('mouseleave', () => {
+    hideTimer = setTimeout(() => {
+      card.classList.remove('tldw-feed-card-active');
+    }, 120);
+  });
+  card.addEventListener('focusin', () => {
+    clearTimeout(hideTimer);
+    card.classList.add('tldw-feed-card-active');
+  });
+  card.addEventListener('focusout', () => {
+    card.classList.remove('tldw-feed-card-active');
+  });
 }
 
 function getFeedCardTitleLink(card) {
@@ -592,8 +622,8 @@ function insertFeedPill(card, pill) {
 
   if (thumbnail) {
     pill.classList.add('tldw-feed-pill-overlay');
-    thumbnail.style.position = thumbnail.style.position || 'relative';
-    thumbnail.appendChild(pill);
+    card.style.position = card.style.position || 'relative';
+    card.appendChild(pill);
     return;
   }
 

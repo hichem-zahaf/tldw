@@ -527,7 +527,7 @@
   max-width: 100%;
   position: relative;
   transition: all 0.2s ease;
-  z-index: 20;
+  z-index: 2147483647;
 }
 
 .tldw-feed-pill:hover {
@@ -581,13 +581,20 @@
   }
 
   .tldw-feed-card-enhanced:hover .tldw-feed-pill,
-  .tldw-feed-card-enhanced:focus-within .tldw-feed-pill {
+  .tldw-feed-card-enhanced:focus-within .tldw-feed-pill,
+  .tldw-feed-card-enhanced.tldw-feed-card-active .tldw-feed-pill,
+  ytd-rich-item-renderer:hover .tldw-feed-pill,
+  ytd-video-renderer:hover .tldw-feed-pill,
+  ytd-compact-video-renderer:hover .tldw-feed-pill,
+  ytd-grid-video-renderer:hover .tldw-feed-pill,
+  yt-lockup-view-model:hover .tldw-feed-pill {
     opacity: 1;
     pointer-events: auto;
     transform: translateY(0) scale(1);
   }
 
-  .tldw-feed-card-enhanced:hover .tldw-feed-pill:hover {
+  .tldw-feed-card-enhanced:hover .tldw-feed-pill:hover,
+  .tldw-feed-card-enhanced.tldw-feed-card-active .tldw-feed-pill:hover {
     transform: translateY(0) scale(1.03);
   }
 }
