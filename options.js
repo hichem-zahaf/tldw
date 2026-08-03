@@ -5,7 +5,6 @@ const DEFAULT_SETTINGS = {
   summaryLanguage: 'en',
   summaryLevel: 3,
   summaryFormat: 'paragraph',
-  autoSummarizeWatch: false,
   showFeedButtons: true,
   answerFirst: true,
   obsidianEnabled: false,
@@ -37,7 +36,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   currentSelectedFormat = settings.summaryFormat || 'paragraph';
   updateFormatPickerButtons(currentSelectedFormat);
 
-  document.getElementById('auto-summarize-watch').checked = !!settings.autoSummarizeWatch;
   document.getElementById('show-feed-buttons').checked = settings.showFeedButtons !== false;
   document.getElementById('answer-first').checked = settings.answerFirst !== false;
   document.getElementById('obsidian-enabled').checked = !!settings.obsidianEnabled;
@@ -176,7 +174,6 @@ async function saveSettings() {
     summaryLanguage: document.getElementById('summary-lang').value,
     summaryLevel: Number(slider.value) || 3,
     summaryFormat: currentSelectedFormat,
-    autoSummarizeWatch: document.getElementById('auto-summarize-watch').checked,
     showFeedButtons: document.getElementById('show-feed-buttons').checked,
     answerFirst: document.getElementById('answer-first').checked,
     obsidianEnabled,

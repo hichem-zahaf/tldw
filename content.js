@@ -3,12 +3,10 @@
  */
 
 let currentVideoId = null;
-let currentSummaryData = null;
-let isSummarizing = false;
-let activeSummaryRequestId = null;
 
-let watchFormat = 'paragraph';
-let watchLevel = 3;
+// Defaults used when queueing a summary (from Settings).
+let summaryFormat = 'paragraph';
+let summaryLevel = 3;
 let queueLanguage = 'en';
 let obsidianEnabled = false;
 let obsidianVault = '';
@@ -21,6 +19,7 @@ let contentSettingsLoaded = false;
 let contentSettingsPromise = null;
 let activeQueueItemId = '';
 let isQueueSheetOpen = false;
+let isQueueTranscriptOpen = false;
 let queueFilter = 'all';
 let queueSheetCloseTimer = null;
 let queueTimeTicker = null;
@@ -45,14 +44,6 @@ const FEED_CARD_SELECTOR = [
   'yt-lockup-view-model'
 ].join(',');
 
-const LEVEL_LABELS = {
-  1: 'Brief',
-  2: 'Short',
-  3: 'Medium',
-  4: 'Detailed',
-  5: 'Full'
-};
-
 // Observe YouTube's mutations for infinite scrolling feed items, while
 // ignoring DOM work performed by this extension itself.
 const scheduleFeedEnhancement = debounce(enhanceFeedCards, 400);
@@ -74,22 +65,11 @@ window.addEventListener('popstate', () => {
   setTimeout(initTLDW, 500);
 });
 
-window.addEventListener('resize', debounce(repositionWatchSummaryBox, 250));
-
-// Highlight capture is document-wide so it works in the watch summary and in
-// the queue sheet, both of which are re-rendered independently.
+// Highlight capture for queue-sheet selections.
 document.addEventListener('mouseup', handleSummarySelectionMouseUp);
 document.addEventListener('mousedown', handleHighlightChipOutsideMouseDown, true);
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (
-    request.action === 'SUMMARY_PROGRESS' &&
-    request.summaryRequestId === activeSummaryRequestId &&
-    request.status
-  ) {
-    renderWatchLoadingStatus(request.status);
-  }
-
   // The popup has no access to the page, so it asks the player through us.
   if (request.action === 'GET_VIDEO_DURATION') {
     sendResponse({ durationSeconds: getWatchPageDurationSeconds() });
@@ -113,7 +93,7 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
       isSummaryQueueOpen = true;
     }
     renderSummaryQueueWidget();
-    updateFeedPillStates();
+    updateSummarizeButtonStates();
   }
 
   if (changes[TIME_SAVED_KEY]) {
@@ -151,14 +131,12 @@ function initTLDW() {
     const videoId = extractVideoId(url);
     if (videoId !== currentVideoId) {
       currentVideoId = videoId;
-      currentSummaryData = null;
-      removeWatchSummaryBox();
-      scheduleWatchBoxInjection();
-    } else if (!document.getElementById('tldw-summary-container')) {
-      scheduleWatchBoxInjection();
-    } else {
-      repositionWatchSummaryBox();
+      removeWatchSummarizeButton();
     }
+    scheduleWatchSummarizeButton();
+  } else {
+    currentVideoId = null;
+    removeWatchSummarizeButton();
   }
 
   // Enhance feed cards across YouTube (Home, Search, Related)
@@ -178,8 +156,8 @@ async function ensureContentSettingsLoaded() {
     try {
       const res = await chrome.runtime.sendMessage({ action: 'GET_SETTINGS' });
       if (res?.success && res.settings) {
-        watchFormat = res.settings.summaryFormat || watchFormat;
-        watchLevel = res.settings.summaryLevel || watchLevel;
+        summaryFormat = res.settings.summaryFormat || summaryFormat;
+        summaryLevel = res.settings.summaryLevel || summaryLevel;
         queueLanguage = res.settings.summaryLanguage || queueLanguage;
         obsidianEnabled = !!res.settings.obsidianEnabled;
         obsidianVault = String(res.settings.obsidianVault || '').trim();
@@ -201,7 +179,7 @@ async function loadSummaryQueue() {
     if (res?.success) {
       summaryQueue = Array.isArray(res.queue) ? res.queue : [];
       renderSummaryQueueWidget();
-      updateFeedPillStates();
+      updateSummarizeButtonStates();
     }
   } catch (_) {}
 }
@@ -217,429 +195,108 @@ async function loadTimeSavedStats() {
 }
 
 /**
- * Schedule injection into YouTube watch page until anchor elements appear
+ * Schedule injection of the watch-page Summarize button until Subscribe appears.
  */
-function scheduleWatchBoxInjection() {
-  let attempts = 0;
-  const maxAttempts = 20;
-
-  const interval = setInterval(() => {
-    attempts++;
-    const injected = injectWatchSummaryBox();
-    if (injected || attempts >= maxAttempts) {
-      clearInterval(interval);
-    }
-  }, 400);
+function scheduleWatchSummarizeButton(attempts = 0) {
+  if (!currentVideoId) return;
+  const injected = injectWatchSummarizeButton();
+  if (!injected && attempts < 25) {
+    setTimeout(() => scheduleWatchSummarizeButton(attempts + 1), 350);
+  }
 }
 
 /**
- * Inject the Summary Box into the YouTube Watch Page
+ * Inject a Summarize control next to YouTube's Subscribe button.
+ * Clicking it queues the current video and opens the Summary Queue sheet —
+ * there is no separate watch-page summary panel.
  */
-function injectWatchSummaryBox() {
-  if (document.getElementById('tldw-summary-container')) return true;
+function injectWatchSummarizeButton() {
+  if (!currentVideoId) return false;
 
-  // Potential injection anchors on YouTube watch page
-  const targetAnchor = getBelowVideoSummaryAnchor();
+  const mount = findWatchSummarizeMount();
+  if (!mount) return false;
 
-  if (!targetAnchor && !getSidebarSummaryAnchor()) return false;
-
-  const container = document.createElement('div');
-  container.id = 'tldw-summary-container';
-  container.className = 'tldw-ltr'; // Default direction
-
-  container.innerHTML = `
-    <div class="tldw-header">
-      <div class="tldw-brand">
-        <span>⚡ TL;DW</span>
-        <span class="tldw-badge">AI Summary</span>
-      </div>
-      <div class="tldw-compact-toolbar" aria-label="Summary toolbar">
-        <select id="tldw-lang-select" class="tldw-select" title="Summary language" aria-label="Summary language">
-          <option value="en" selected>English</option>
-          <option value="ar">العربية</option>
-          <option value="auto">Auto</option>
-        </select>
-        <button id="tldw-transcript-btn" class="tldw-btn tldw-btn-secondary" style="display:none;" title="Toggle full transcript">
-          Transcript
-        </button>
-        <button id="tldw-copy-btn" class="tldw-icon-btn" style="display:none;" title="Copy summary" aria-label="Copy summary" data-sidebar-label="Copy">
-          <span aria-hidden="true">⧉</span>
-        </button>
-        <button id="tldw-obsidian-btn" class="tldw-btn tldw-btn-secondary tldw-obsidian-btn" style="display:none;" title="Save this summary as a note in Obsidian" aria-label="Save summary to Obsidian" data-sidebar-label="Obsidian">
-          <span aria-hidden="true">✦</span>
-          <span class="tldw-obsidian-btn-label">Save to Obsidian</span>
-        </button>
-        <button id="tldw-refresh-btn" class="tldw-icon-btn" style="display:none;" title="Refresh summary" aria-label="Refresh summary" data-sidebar-label="Refresh">
-          <span aria-hidden="true">↻</span>
-        </button>
-        <button id="tldw-summarize-btn" class="tldw-btn tldw-btn-primary">
-          Summarize
-        </button>
-      </div>
-    </div>
-
-    <div class="tldw-settings-row" aria-label="Summary settings">
-      <div class="tldw-segmented tldw-format-group" role="group" aria-label="Summary format">
-        <button type="button" class="tldw-format-btn active" data-format="paragraph">Paragraph</button>
-        <button type="button" class="tldw-format-btn" data-format="bullets">Bullets</button>
-        <button type="button" class="tldw-format-btn" data-format="key_takeaways">Takeaways</button>
-      </div>
-      <div class="tldw-level-group">
-        <span class="tldw-settings-label">Length</span>
-        <div class="tldw-segmented tldw-detail-group" role="group" aria-label="Summary length">
-          <button type="button" class="tldw-level-btn" data-level="1">Brief</button>
-          <button type="button" class="tldw-level-btn" data-level="2">Short</button>
-          <button type="button" class="tldw-level-btn active" data-level="3">Medium</button>
-          <button type="button" class="tldw-level-btn" data-level="4">Detailed</button>
-          <button type="button" class="tldw-level-btn" data-level="5">Full</button>
-        </div>
-        <select id="tldw-level-select" class="tldw-select tldw-level-select" title="Summary length" aria-label="Summary length">
-          <option value="1">Brief</option>
-          <option value="2">Short</option>
-          <option value="3" selected>Medium</option>
-          <option value="4">Detailed</option>
-          <option value="5">Full</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="tldw-body" id="tldw-body">
-      <div class="tldw-placeholder">
-        <span class="tldw-placeholder-text">Get a clean AI summary of this video without watching the whole thing.</span>
-      </div>
-    </div>
-    <div id="tldw-transcript-box" class="tldw-transcript-box"></div>
-  `;
-
-  placeWatchSummaryBox(container);
-
-  // Bind Event Listeners
-  document.getElementById('tldw-summarize-btn').addEventListener('click', () => fetchAndRenderWatchSummary(false));
-  document.getElementById('tldw-refresh-btn').addEventListener('click', () => fetchAndRenderWatchSummary(true));
-  document.getElementById('tldw-copy-btn').addEventListener('click', copySummaryToClipboard);
-  document.getElementById('tldw-obsidian-btn').addEventListener('click', () => saveWatchSummaryToObsidian('bookmark'));
-  document.getElementById('tldw-transcript-btn').addEventListener('click', toggleTranscriptBox);
-  document.getElementById('tldw-lang-select').addEventListener('change', () => fetchAndRenderWatchSummary(false));
-  document.getElementById('tldw-level-select').addEventListener('change', (e) => {
-    watchLevel = Number(e.target.value);
-    updateWatchLevelBadge(watchLevel);
-    fetchAndRenderWatchSummary(false);
-  });
-
-  const levelBtns = container.querySelectorAll('.tldw-level-btn');
-  levelBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      watchLevel = Number(btn.dataset.level);
-      updateWatchLevelBadge(watchLevel);
-      fetchAndRenderWatchSummary(false);
-    });
-  });
-
-  const formatBtns = container.querySelectorAll('.tldw-format-btn');
-  formatBtns.forEach(btn => {
-    btn.addEventListener('click', () => {
-      watchFormat = btn.dataset.format;
-      updateWatchFormatButtons(watchFormat);
-      fetchAndRenderWatchSummary(false);
-    });
-  });
-
-  // Load saved settings
-  chrome.runtime.sendMessage({ action: 'GET_SETTINGS' }, (res) => {
-    if (res?.success && res.settings) {
-      watchFormat = res.settings.summaryFormat || 'paragraph';
-      watchLevel = res.settings.summaryLevel || 3;
-      updateWatchLevelBadge(watchLevel);
-      updateWatchFormatButtons(watchFormat);
-
-      if (res.settings.autoSummarizeWatch) {
-        fetchAndRenderWatchSummary(false);
-      }
-    }
-  });
-
-  setTimeout(repositionWatchSummaryBox, 1000);
-  setTimeout(repositionWatchSummaryBox, 2500);
-
-  return true;
-}
-
-function updateWatchFormatButtons(format) {
-  const container = document.getElementById('tldw-summary-container');
-  if (!container) return;
-  container.querySelectorAll('.tldw-format-btn').forEach(btn => {
-    const isActive = btn.dataset.format === format;
-    btn.classList.toggle('active', isActive);
-    btn.setAttribute('aria-pressed', String(isActive));
-  });
-}
-
-function updateWatchLevelBadge(level) {
-  const container = document.getElementById('tldw-summary-container');
-  if (!container) return;
-  container.querySelectorAll('.tldw-level-btn').forEach(btn => {
-    const isActive = Number(btn.dataset.level) === Number(level);
-    btn.classList.toggle('active', isActive);
-    btn.setAttribute('aria-pressed', String(isActive));
-    btn.title = LEVEL_LABELS[btn.dataset.level] || `Level ${btn.dataset.level}`;
-  });
-
-  const levelSelect = container.querySelector('#tldw-level-select');
-  if (levelSelect) {
-    levelSelect.value = String(level);
-  }
-}
-
-function repositionWatchSummaryBox() {
-  const container = document.getElementById('tldw-summary-container');
-  if (container) {
-    placeWatchSummaryBox(container);
-  }
-}
-
-function placeWatchSummaryBox(container) {
-  const sidebarAnchor = getSidebarSummaryAnchor();
-
-  if (sidebarAnchor) {
-    container.classList.add('tldw-sidebar');
-    container.classList.remove('tldw-below-video');
-    sidebarAnchor.prepend(container);
-    return true;
+  let btn = document.getElementById('tldw-watch-summarize-btn');
+  if (!btn) {
+    btn = document.createElement('button');
+    btn.id = 'tldw-watch-summarize-btn';
+    btn.type = 'button';
+    btn.className = 'tldw-watch-summarize-btn';
+    btn.textContent = '⚡ Summarize';
+    btn.title = 'Add this video to the TL;DW summary queue';
+    btn.setAttribute('aria-label', 'Summarize with TL;DW');
+    btn.addEventListener('click', handleWatchSummarizeClick);
   }
 
-  const belowVideoAnchor = getBelowVideoSummaryAnchor();
-  if (!belowVideoAnchor) return false;
+  btn.dataset.videoId = currentVideoId;
 
-  container.classList.add('tldw-below-video');
-  container.classList.remove('tldw-sidebar');
-
-  const descriptionElement = belowVideoAnchor.querySelector('#description') || belowVideoAnchor.querySelector('#bottom-row');
-  if (descriptionElement && descriptionElement.parentNode) {
-    descriptionElement.parentNode.insertBefore(container, descriptionElement);
+  if (mount.after) {
+    mount.after.insertAdjacentElement('afterend', btn);
   } else {
-    belowVideoAnchor.prepend(container);
+    mount.parent.insertBefore(btn, mount.before);
   }
 
+  updateSummarizeButtonStates();
   return true;
 }
 
-function getSidebarSummaryAnchor() {
-  if (!window.matchMedia('(min-width: 1120px)').matches) return null;
+function findWatchSummarizeMount() {
+  const subscribe =
+    document.querySelector('ytd-watch-metadata #owner #subscribe-button') ||
+    document.querySelector('#owner #subscribe-button') ||
+    document.querySelector('ytd-video-owner-renderer #subscribe-button') ||
+    document.querySelector('ytd-watch-metadata #subscribe-button') ||
+    document.querySelector('#subscribe-button');
 
-  const secondaryInner =
-    document.querySelector('ytd-watch-flexy #secondary-inner') ||
-    document.querySelector('#secondary-inner');
-
-  if (!secondaryInner) return null;
-
-  const secondary = secondaryInner.closest('#secondary') || secondaryInner;
-  const secondaryRect = secondary.getBoundingClientRect();
-  if (secondaryRect.width < 300 || secondaryRect.height === 0) return null;
-
-  return secondaryInner;
-}
-
-function getBelowVideoSummaryAnchor() {
-  return (
-    document.querySelector('ytd-watch-metadata#watch-metadata') ||
-    document.querySelector('#above-the-fold') ||
-    document.querySelector('#meta') ||
-    document.querySelector('#primary-inner')
-  );
-}
-
-function setWatchSummaryDirection(isRtl) {
-  const container = document.getElementById('tldw-summary-container');
-  if (!container) return;
-  container.classList.toggle('tldw-rtl', isRtl);
-  container.classList.toggle('tldw-ltr', !isRtl);
-}
-
-/**
- * Remove watch page summary box
- */
-function removeWatchSummaryBox() {
-  hideHighlightChip();
-  const box = document.getElementById('tldw-summary-container');
-  if (box) box.remove();
-}
-
-/**
- * Fetch summary from background script and render on watch page
- */
-async function fetchAndRenderWatchSummary(forceRefresh = false) {
-  if (isSummarizing) return;
-  isSummarizing = true;
-
-  const container = document.getElementById('tldw-summary-container');
-  const bodyEl = document.getElementById('tldw-body');
-  const summarizeBtn = document.getElementById('tldw-summarize-btn');
-  const langSelect = document.getElementById('tldw-lang-select');
-
-  if (!container || !bodyEl) {
-    isSummarizing = false;
-    return;
+  if (subscribe?.isConnected) {
+    return { parent: subscribe.parentElement, after: subscribe, before: null };
   }
 
-  const selectedLang = langSelect ? langSelect.value : 'en';
-  const videoTitle = getWatchVideoTitle();
-  const summaryRequestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  activeSummaryRequestId = summaryRequestId;
+  // Newer flexible-actions layouts sometimes keep subscribe outside #subscribe-button.
+  const subscribeAlt =
+    document.querySelector('yt-subscribe-button-view-model') ||
+    document.querySelector('ytd-subscribe-button-renderer');
 
-  // Show Loading State
-  renderWatchLoadingStatus('Checking cache...');
-
-  if (summarizeBtn) summarizeBtn.style.display = 'none';
-
-  try {
-    const response = await chrome.runtime.sendMessage({
-      action: 'GET_SUMMARY',
-      videoId: currentVideoId,
-      videoUrl: window.location.href,
-      videoTitle,
-      language: selectedLang,
-      summaryLevel: watchLevel,
-      summaryFormat: watchFormat,
-      videoDurationSeconds: getWatchPageDurationSeconds(),
-      summaryRequestId,
-      forceRefresh
-    });
-
-    if (!response.success) {
-      throw new Error(response.error || 'Failed to generate summary.');
-    }
-
-    currentSummaryData = response;
-
-    // Detect RTL (Arabic) or LTR text
-    const isArabic = isArabicText(response.summary);
-    setWatchSummaryDirection(isArabic);
-
-    // Render Formatted Markdown Summary
-    const answer = response.answer;
-    const summaryBody = answer?.hasHeader ? answer.body : response.summary;
-    bodyEl.innerHTML = `
-      ${renderAnswerCard(answer, 'data-tldw-obsidian-source="watch"')}
-      ${renderBodySectionLabel(answer, summaryBody)}
-      <div class="tldw-summary-text" data-tldw-obsidian-source="watch">${parseMarkdown(summaryBody)}</div>
-      <div class="tldw-obsidian-hint" id="tldw-obsidian-hint" style="display:none;">
-        <span aria-hidden="true">✦</span>
-        <span>Select any text above to save it as a highlight in Obsidian.</span>
-      </div>
-    `;
-
-    // Populate Transcript box
-    const transcriptBox = document.getElementById('tldw-transcript-box');
-    if (transcriptBox && response.transcript) {
-      transcriptBox.textContent = response.transcript;
-    }
-
-    // Show Action buttons
-    document.getElementById('tldw-copy-btn').style.display = 'inline-flex';
-    document.getElementById('tldw-refresh-btn').style.display = 'inline-flex';
-    updateObsidianUiVisibility();
-    if (response.transcript) {
-      document.getElementById('tldw-transcript-btn').style.display = 'inline-flex';
-    }
-
-  } catch (err) {
-    bodyEl.innerHTML = `
-      <div class="tldw-error">
-        ⚠️ <strong>Error:</strong> ${escapeHTML(err.message || String(err))}
-      </div>
-    `;
-    if (summarizeBtn) {
-      summarizeBtn.style.display = 'inline-flex';
-      summarizeBtn.textContent = '🔄 Retry Summarize';
-    }
-  } finally {
-    if (activeSummaryRequestId === summaryRequestId) {
-      activeSummaryRequestId = null;
-    }
-    isSummarizing = false;
+  if (subscribeAlt?.isConnected) {
+    return { parent: subscribeAlt.parentElement, after: subscribeAlt, before: null };
   }
-}
 
-function renderWatchLoadingStatus(status) {
-  const bodyEl = document.getElementById('tldw-body');
-  if (!bodyEl) return;
+  // Last resort: lead the like/share action cluster.
+  const actions =
+    document.querySelector('#actions-inner') ||
+    document.querySelector('#top-level-buttons-computed') ||
+    document.querySelector('ytd-watch-metadata #actions');
 
-  bodyEl.innerHTML = `
-    <div class="tldw-loading">
-      <div class="tldw-spinner"></div>
-      <span>${escapeHTML(status)}</span>
-    </div>
-  `;
-}
-
-/**
- * Toggle Raw Transcript visibility
- */
-function toggleTranscriptBox() {
-  const box = document.getElementById('tldw-transcript-box');
-  if (box) {
-    box.classList.toggle('tldw-show');
+  if (actions?.isConnected) {
+    return { parent: actions, after: null, before: actions.firstChild };
   }
+
+  return null;
 }
 
-/**
- * Copy summary to clipboard
- */
-function copySummaryToClipboard() {
-  if (!currentSummaryData?.summary) return;
-  navigator.clipboard.writeText(summaryClipboardText(currentSummaryData)).then(() => {
-    const btn = document.getElementById('tldw-copy-btn');
-    if (btn) {
-      const origText = btn.innerHTML;
-      const origSidebarLabel = btn.dataset.sidebarLabel;
-      btn.innerHTML = '<span aria-hidden="true">✓</span>';
-      btn.dataset.sidebarLabel = 'Copied';
-      setTimeout(() => {
-        btn.innerHTML = origText;
-        btn.dataset.sidebarLabel = origSidebarLabel;
-      }, 2000);
-    }
+function removeWatchSummarizeButton() {
+  document.getElementById('tldw-watch-summarize-btn')?.remove();
+}
+
+async function handleWatchSummarizeClick(e) {
+  e.preventDefault();
+  e.stopPropagation();
+
+  const videoId = currentVideoId || extractVideoId(window.location.href);
+  if (!videoId) return;
+
+  await queueOrOpenSummary({
+    videoId,
+    videoUrl: window.location.href,
+    videoTitle: getWatchVideoTitle(),
+    durationSeconds: getWatchPageDurationSeconds(),
+    statusButton: e.currentTarget,
+    openSheet: true
   });
 }
 
 function updateObsidianUiVisibility() {
-  const show = isObsidianExportReady() && !!currentSummaryData?.summary;
-
-  const btn = document.getElementById('tldw-obsidian-btn');
-  if (btn) btn.style.display = show ? 'inline-flex' : 'none';
-
-  const hint = document.getElementById('tldw-obsidian-hint');
-  if (hint) hint.style.display = show ? 'flex' : 'none';
-
-  if (!show) hideHighlightChip();
-}
-
-async function saveWatchSummaryToObsidian(mode, highlight = '') {
-  if (!currentSummaryData?.summary) return;
-
-  const btn = document.getElementById('tldw-obsidian-btn');
-  try {
-    await saveSummaryToObsidian({
-      mode,
-      videoId: currentVideoId,
-      videoTitle: getWatchVideoTitle(),
-      videoUrl: window.location.href,
-      summary: currentSummaryData.summary,
-      videoType: currentSummaryData.answer?.videoType || '',
-      highlight
-    });
-    const label = btn?.querySelector('.tldw-obsidian-btn-label');
-    if (label && mode === 'bookmark') {
-      const origLabel = label.textContent;
-      label.textContent = 'Saved to Obsidian';
-      setTimeout(() => {
-        label.textContent = origLabel;
-      }, 2000);
-    }
-    hideHighlightChip();
-  } catch (err) {
-    alert(err.message || String(err));
-  }
+  if (!isObsidianExportReady()) hideHighlightChip();
 }
 
 async function saveSummaryToObsidian({
@@ -698,8 +355,8 @@ function launchObsidianUri(uri) {
 const HIGHLIGHT_CHIP_LABEL = 'Save highlight';
 
 /**
- * Selection can happen in the watch summary or inside a queue sheet, so the
- * chip resolves its video context from whichever summary block was selected.
+ * Selection happens inside the queue sheet; the chip resolves its video
+ * context from the summary block that was selected.
  */
 function getObsidianSelection() {
   const selection = window.getSelection();
@@ -722,25 +379,16 @@ function getObsidianSelection() {
 }
 
 function resolveObsidianContext(source, queueId) {
-  if (source === 'queue') {
-    const item = summaryQueue.find(queueItem => queueItem.id === queueId);
-    if (!item?.summary) return null;
-    return {
-      videoId: item.videoId,
-      videoTitle: item.videoTitle || item.videoId,
-      videoUrl: item.videoUrl || `https://www.youtube.com/watch?v=${item.videoId}`,
-      summary: item.summary,
-      videoType: item.answer?.videoType || ''
-    };
-  }
+  if (source !== 'queue') return null;
 
-  if (!currentSummaryData?.summary) return null;
+  const item = summaryQueue.find(queueItem => queueItem.id === queueId);
+  if (!item?.summary) return null;
   return {
-    videoId: currentVideoId,
-    videoTitle: getWatchVideoTitle(),
-    videoUrl: window.location.href,
-    summary: currentSummaryData.summary,
-    videoType: currentSummaryData.answer?.videoType || ''
+    videoId: item.videoId,
+    videoTitle: item.videoTitle || item.videoId,
+    videoUrl: item.videoUrl || `https://www.youtube.com/watch?v=${item.videoId}`,
+    summary: item.summary,
+    videoType: item.answer?.videoType || ''
   };
 }
 
@@ -877,7 +525,8 @@ function enhanceFeedCards() {
   });
 
   ensureFeedPillPortal();
-  updateFeedPillStates();
+  updateSummarizeButtonStates();
+  if (currentVideoId) injectWatchSummarizeButton();
 }
 
 function markFeedCardEnhanced(card) {
@@ -951,7 +600,7 @@ function showFeedPillForCard(card) {
   pill.style.left = `${Math.round(bounds.left + 10)}px`;
   pill.style.top = `${Math.round(bounds.top + 10)}px`;
   pill.dataset.videoId = context.videoId;
-  updateFeedPillStates();
+  updateSummarizeButtonStates();
   pill.classList.add('tldw-feed-pill-visible');
 }
 
@@ -1066,22 +715,32 @@ function getFeedCardThumbnail(card) {
 }
 
 /**
- * Handle feed card summary request
+ * Queue a video for summarization, or open it if it is already in the queue.
+ * Watch-page clicks always open the sheet; feed pills only open it when done.
  */
-async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitle = '', durationSeconds = 0) {
+async function queueOrOpenSummary({
+  videoId,
+  videoUrl,
+  videoTitle = '',
+  durationSeconds = 0,
+  statusButton = null,
+  openSheet = false
+}) {
   const existing = findQueueItemByVideoId(videoId);
   if (existing) {
     isSummaryQueueOpen = true;
-    if (existing.status === 'done') {
+    if (openSheet || existing.status === 'done') {
       openQueueSheet(existing.id);
     } else {
       renderSummaryQueueWidget(existing.id);
     }
-    return;
+    return { item: existing, queued: false };
   }
 
-  pillBtn.disabled = true;
-  pillBtn.innerHTML = 'Queued...';
+  if (statusButton) {
+    statusButton.disabled = true;
+    statusButton.textContent = 'Queued...';
+  }
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -1090,8 +749,8 @@ async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitl
       videoUrl,
       videoTitle,
       language: queueLanguage,
-      summaryLevel: watchLevel,
-      summaryFormat: watchFormat,
+      summaryLevel: summaryLevel,
+      summaryFormat: summaryFormat,
       videoDurationSeconds: durationSeconds
     });
 
@@ -1101,14 +760,39 @@ async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitl
 
     summaryQueue = Array.isArray(response.queue) ? response.queue : summaryQueue;
     isSummaryQueueOpen = true;
-    renderSummaryQueueWidget(response.item?.id);
-    updateFeedPillStates();
+    updateSummarizeButtonStates();
 
+    if (openSheet && response.item?.id) {
+      openQueueSheet(response.item.id);
+    } else {
+      renderSummaryQueueWidget(response.item?.id);
+    }
+
+    return { item: response.item, queued: true };
   } catch (err) {
-    pillBtn.innerHTML = 'Retry queue';
-    pillBtn.title = err.message || String(err);
+    if (statusButton) {
+      statusButton.textContent = 'Retry';
+      statusButton.title = err.message || String(err);
+    }
+    throw err;
   } finally {
-    pillBtn.disabled = false;
+    if (statusButton) statusButton.disabled = false;
+    updateSummarizeButtonStates();
+  }
+}
+
+async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitle = '', durationSeconds = 0) {
+  try {
+    await queueOrOpenSummary({
+      videoId,
+      videoUrl,
+      videoTitle,
+      durationSeconds,
+      statusButton: pillBtn,
+      openSheet: false
+    });
+  } catch (_) {
+    // Button title already carries the error; feed pills stay non-blocking.
   }
 }
 
@@ -1116,33 +800,51 @@ function findQueueItemByVideoId(videoId) {
   return summaryQueue.find(item => item.videoId === videoId);
 }
 
-function updateFeedPillStates() {
-  document.querySelectorAll('.tldw-feed-pill').forEach(pill => {
-    const item = findQueueItemByVideoId(pill.dataset.videoId);
-    let label = '⚡ Summarize';
-    let title = 'Add this video to the TL;DW summary queue';
-    let stateClass = '';
+function getSummarizeButtonPresentation(videoId) {
+  const item = findQueueItemByVideoId(videoId);
+  let label = '⚡ Summarize';
+  let title = 'Add this video to the TL;DW summary queue';
+  let stateClass = '';
 
-    if (item?.status === 'done') {
-      label = '✓ In Queue';
-      title = 'Summary ready. Click to open the TL;DW queue.';
-      stateClass = 'tldw-feed-pill-done';
-    } else if (item?.status === 'error') {
-      label = '⚠ Queue Error';
-      title = item.error || 'Summary failed. Click to open the TL;DW queue.';
-      stateClass = 'tldw-feed-pill-error';
-    } else if (item) {
-      label = item.status === 'running' ? '⏳ Summarizing' : 'Queued';
-      title = item.progress || 'Summary queued.';
-      stateClass = 'tldw-feed-pill-running';
-    }
+  if (item?.status === 'done') {
+    label = '✓ Summary';
+    title = 'Summary ready. Click to open it in the TL;DW queue.';
+    stateClass = 'is-done';
+  } else if (item?.status === 'error') {
+    label = '⚠ Retry';
+    title = item.error || 'Summary failed. Click to open the TL;DW queue.';
+    stateClass = 'is-error';
+  } else if (item) {
+    label = item.status === 'running' ? '⏳ Summarizing' : 'Queued';
+    title = item.progress || 'Summary queued.';
+    stateClass = 'is-running';
+  }
+
+  return { item, label, title, stateClass };
+}
+
+function updateSummarizeButtonStates() {
+  document.querySelectorAll('.tldw-feed-pill').forEach(pill => {
+    const { label, title, stateClass } = getSummarizeButtonPresentation(pill.dataset.videoId);
+    const feedState = stateClass ? `tldw-feed-pill-${stateClass.replace('is-', '')}` : '';
 
     if (pill.disabled) pill.disabled = false;
     if (pill.textContent !== label) pill.textContent = label;
     if (pill.title !== title) pill.title = title;
 
     ['tldw-feed-pill-running', 'tldw-feed-pill-done', 'tldw-feed-pill-error']
-      .forEach(className => pill.classList.toggle(className, className === stateClass));
+      .forEach(className => pill.classList.toggle(className, className === feedState));
+  });
+
+  const watchBtn = document.getElementById('tldw-watch-summarize-btn');
+  if (!watchBtn) return;
+
+  const videoId = watchBtn.dataset.videoId || currentVideoId;
+  const { label, title, stateClass } = getSummarizeButtonPresentation(videoId);
+  if (!watchBtn.disabled && watchBtn.textContent !== label) watchBtn.textContent = label;
+  if (!watchBtn.disabled && watchBtn.title !== title) watchBtn.title = title;
+  ['is-running', 'is-done', 'is-error'].forEach(className => {
+    watchBtn.classList.toggle(className, className === stateClass);
   });
 }
 
@@ -1153,8 +855,9 @@ function isTldwOwnedMutation(mutation) {
 
   return !!target?.closest([
     '.tldw-feed-pill',
-    '#tldw-summary-container',
-    '#tldw-summary-queue-widget'
+    '#tldw-watch-summarize-btn',
+    '#tldw-summary-queue-widget',
+    '#tldw-highlight-chip'
   ].join(','));
 }
 
@@ -1224,7 +927,7 @@ async function handleSummaryQueueClick(e) {
       summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue;
       closeQueueSheet({ immediate: true });
       renderSummaryQueueWidget();
-      updateFeedPillStates();
+      updateSummarizeButtonStates();
     }
     return;
   }
@@ -1236,6 +939,12 @@ async function handleSummaryQueueClick(e) {
 
   if (action === 'close-sheet') {
     closeQueueSheet();
+    return;
+  }
+
+  if (action === 'toggle-transcript') {
+    isQueueTranscriptOpen = !isQueueTranscriptOpen;
+    renderSummaryQueueWidget();
     return;
   }
 
@@ -1278,7 +987,7 @@ async function handleSummaryQueueClick(e) {
     if (res?.success) {
       summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue;
       renderSummaryQueueWidget(id);
-      updateFeedPillStates();
+      updateSummarizeButtonStates();
     }
     return;
   }
@@ -1292,7 +1001,7 @@ async function handleSummaryQueueClick(e) {
       summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue.filter(queueItem => queueItem.id !== id);
       if (activeQueueItemId === id) closeQueueSheet({ immediate: true });
       renderSummaryQueueWidget();
-      updateFeedPillStates();
+      updateSummarizeButtonStates();
     }
   }
 }
@@ -1370,6 +1079,7 @@ function openQueueSheet(id) {
   if (!item) return;
 
   clearTimeout(queueSheetCloseTimer);
+  if (activeQueueItemId !== id) isQueueTranscriptOpen = false;
   activeQueueItemId = id;
   isSummaryQueueOpen = true;
   renderSummaryQueueWidget();
@@ -1420,6 +1130,7 @@ function closeQueueSheet({ immediate = false } = {}) {
   cancelQueueMarkRead();
   hideHighlightChip();
   isQueueSheetOpen = false;
+  isQueueTranscriptOpen = false;
 
   if (immediate) {
     activeQueueItemId = '';
@@ -1650,12 +1361,17 @@ function renderQueueSheet(item) {
   const sheetSource = `data-tldw-obsidian-source="queue" data-queue-id="${id}"`;
   const dir = isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr';
   const summaryBody = item.answer?.hasHeader ? item.answer.body : item.summary;
+  const transcriptBlock = item.transcript && isQueueTranscriptOpen
+    ? `<pre class="tldw-q-sheet-transcript">${escapeHTML(item.transcript)}</pre>`
+    : '';
+
   const body = item.status === 'error'
     ? `<div class="tldw-summary-queue-error">${escapeHTML(item.error || 'Summary failed.')}</div>`
     : item.summary
       ? `<div class="tldw-q-sheet-answer ${dir}">${renderAnswerCard(item.answer, sheetSource)}</div>
          ${renderBodySectionLabel(item.answer, summaryBody)}
          <div class="tldw-q-sheet-summary ${dir}" ${sheetSource}>${parseMarkdown(summaryBody)}</div>
+         ${transcriptBlock}
          ${isObsidianExportReady()
            ? '<div class="tldw-obsidian-hint"><span aria-hidden="true">✦</span><span>Select any text above to save it as a highlight.</span></div>'
            : ''}`
@@ -1680,6 +1396,10 @@ function renderQueueSheet(item) {
       <details class="tldw-q-more">
         <summary class="tldw-q-act" title="More actions" aria-label="More actions"><span aria-hidden="true">⋯</span></summary>
         <div class="tldw-q-more-menu" role="menu">
+          ${item.transcript
+            ? `<button type="button" role="menuitem" data-tldw-queue-action="toggle-transcript" data-queue-id="${id}">
+                 <span aria-hidden="true">☰</span> ${isQueueTranscriptOpen ? 'Hide transcript' : 'Show transcript'}</button>`
+            : ''}
           ${item.summary && isObsidianExportReady()
             ? `<button type="button" role="menuitem" data-tldw-queue-action="obsidian" data-queue-id="${id}">
                  <span aria-hidden="true">✦</span> Save to Obsidian</button>`

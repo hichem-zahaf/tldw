@@ -32,7 +32,6 @@ const DEFAULT_SETTINGS = {
   summaryLanguage: 'en', // 'en', 'ar', 'auto'
   summaryLevel: 3, // Level 1 (Ultra Short) to 5 (Deep Dive)
   summaryFormat: 'paragraph', // 'paragraph', 'bullets', 'key_takeaways'
-  autoSummarizeWatch: false,
   showFeedButtons: true,
   answerFirst: true,
   obsidianEnabled: false,
