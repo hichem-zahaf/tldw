@@ -13,12 +13,22 @@ let queueLanguage = 'en';
 let summaryQueue = [];
 let isSummaryQueueOpen = false;
 let contentSettingsLoaded = false;
-const collapsedSummaryQueueItemIds = new Set();
+let activeQueueItemId = '';
+let isQueueSheetOpen = false;
+let queueFilter = 'all';
+let queueSheetCloseTimer = null;
+let queueTimeTicker = null;
+let queueMarkReadTimer = null;
+let pendingMarkReadId = '';
 const feedCardContexts = new WeakMap();
 let activeFeedCard = null;
 let feedPillHideTimer = null;
 
 const SUMMARY_QUEUE_KEY = 'tldw_summary_queue';
+const QUEUE_SHEET_TRANSITION_MS = 340;
+// Long enough that opening the wrong row and bouncing straight back out does
+// not silently consume a summary, short enough to feel immediate.
+const QUEUE_MARK_READ_DELAY_MS = 700;
 
 const FEED_CARD_SELECTOR = [
   'ytd-rich-item-renderer',
@@ -683,7 +693,11 @@ async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitl
   const existing = findQueueItemByVideoId(videoId);
   if (existing) {
     isSummaryQueueOpen = true;
-    renderSummaryQueueWidget(existing.id);
+    if (existing.status === 'done') {
+      openQueueSheet(existing.id);
+    } else {
+      renderSummaryQueueWidget(existing.id);
+    }
     return;
   }
 
@@ -774,91 +788,218 @@ function injectSummaryQueueWidget() {
   widget.style.display = 'none';
   document.body.appendChild(widget);
 
-  widget.addEventListener('click', async (e) => {
-    const actionEl = e.target.closest('[data-tldw-queue-action]');
-    if (!actionEl) return;
-
-    const action = actionEl.dataset.tldwQueueAction;
-    const id = actionEl.dataset.queueId;
-
-    if (action === 'toggle') {
-      isSummaryQueueOpen = !isSummaryQueueOpen;
-      renderSummaryQueueWidget();
-      return;
-    }
-
-    if (action === 'close') {
-      isSummaryQueueOpen = false;
-      renderSummaryQueueWidget();
-      return;
-    }
-
-    const item = summaryQueue.find(queueItem => queueItem.id === id);
-    if (!item) return;
-
-    if (action === 'copy' && item.summary) {
-      await navigator.clipboard.writeText(item.summary);
-      const originalText = actionEl.textContent;
-      actionEl.textContent = 'Copied';
-      setTimeout(() => {
-        actionEl.textContent = originalText;
-      }, 1600);
-      return;
-    }
-
-    if (action === 'toggle-summary') {
-      const isCollapsed = collapsedSummaryQueueItemIds.has(id);
-      const isLinkClick = Boolean(e.target.closest('a'));
-
-      if (isCollapsed) {
-        if (isLinkClick) {
-          e.preventDefault();
-        }
-        collapsedSummaryQueueItemIds.delete(id);
-        renderSummaryQueueWidget(id);
-        return;
-      }
-
-      if (isLinkClick) {
-        return;
-      }
-
-      collapsedSummaryQueueItemIds.add(id);
-      renderSummaryQueueWidget(id);
-      return;
-    }
-
-    if (action === 'retry') {
-      actionEl.textContent = 'Retrying...';
-      const res = await chrome.runtime.sendMessage({
-        action: 'RETRY_SUMMARY_QUEUE_ITEM',
-        id
-      });
-      if (res?.success) {
-        summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue;
-        renderSummaryQueueWidget(id);
-        updateFeedPillStates();
-      }
-      return;
-    }
-
-    if (action === 'remove') {
-      actionEl.textContent = 'Removing...';
-      const res = await chrome.runtime.sendMessage({
-        action: 'REMOVE_SUMMARY_QUEUE_ITEM',
-        id
-      });
-      if (res?.success) {
-        collapsedSummaryQueueItemIds.delete(id);
-        summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue.filter(queueItem => queueItem.id !== id);
-        renderSummaryQueueWidget();
-        updateFeedPillStates();
-      }
-    }
-  });
+  widget.addEventListener('click', handleSummaryQueueClick);
+  document.addEventListener('keydown', handleSummaryQueueKeydown, true);
 
   renderSummaryQueueWidget();
   return true;
+}
+
+async function handleSummaryQueueClick(e) {
+  const actionEl = e.target.closest('[data-tldw-queue-action]');
+  if (!actionEl) return;
+
+  const action = actionEl.dataset.tldwQueueAction;
+  const id = actionEl.dataset.queueId;
+
+  if (action === 'toggle') {
+    isSummaryQueueOpen = !isSummaryQueueOpen;
+    if (!isSummaryQueueOpen) closeQueueSheet({ immediate: true });
+    renderSummaryQueueWidget();
+    return;
+  }
+
+  if (action === 'close') {
+    isSummaryQueueOpen = false;
+    closeQueueSheet({ immediate: true });
+    renderSummaryQueueWidget();
+    return;
+  }
+
+  if (action === 'filter') {
+    queueFilter = actionEl.dataset.filter || 'all';
+    renderSummaryQueueWidget();
+    return;
+  }
+
+  if (action === 'mark-all-read') {
+    const res = await chrome.runtime.sendMessage({ action: 'MARK_SUMMARY_QUEUE_READ', all: true });
+    if (res?.success) {
+      summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue;
+      renderSummaryQueueWidget();
+    }
+    return;
+  }
+
+  if (action === 'clear-done') {
+    const res = await chrome.runtime.sendMessage({ action: 'CLEAR_DONE_SUMMARY_QUEUE_ITEMS' });
+    if (res?.success) {
+      summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue;
+      closeQueueSheet({ immediate: true });
+      renderSummaryQueueWidget();
+      updateFeedPillStates();
+    }
+    return;
+  }
+
+  if (action === 'open') {
+    openQueueSheet(id);
+    return;
+  }
+
+  if (action === 'close-sheet') {
+    closeQueueSheet();
+    return;
+  }
+
+  const item = summaryQueue.find(queueItem => queueItem.id === id);
+  if (!item) return;
+
+  if (action === 'copy' && item.summary) {
+    await navigator.clipboard.writeText(item.summary);
+    const originalText = actionEl.textContent;
+    actionEl.textContent = 'Copied';
+    setTimeout(() => {
+      actionEl.textContent = originalText;
+    }, 1600);
+    return;
+  }
+
+  if (action === 'retry') {
+    actionEl.textContent = 'Retrying...';
+    const res = await chrome.runtime.sendMessage({
+      action: 'RETRY_SUMMARY_QUEUE_ITEM',
+      id
+    });
+    if (res?.success) {
+      summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue;
+      renderSummaryQueueWidget(id);
+      updateFeedPillStates();
+    }
+    return;
+  }
+
+  if (action === 'remove') {
+    const res = await chrome.runtime.sendMessage({
+      action: 'REMOVE_SUMMARY_QUEUE_ITEM',
+      id
+    });
+    if (res?.success) {
+      summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue.filter(queueItem => queueItem.id !== id);
+      if (activeQueueItemId === id) closeQueueSheet({ immediate: true });
+      renderSummaryQueueWidget();
+      updateFeedPillStates();
+    }
+  }
+}
+
+// Escape unwinds one layer at a time (sheet, then panel). Arrow keys only move
+// between rows while focus is already inside the widget, so YouTube's own
+// shortcuts keep working everywhere else.
+function handleSummaryQueueKeydown(e) {
+  if (!isSummaryQueueOpen) return;
+
+  if (e.key === 'Escape') {
+    if (isQueueSheetOpen) {
+      closeQueueSheet();
+    } else {
+      isSummaryQueueOpen = false;
+      renderSummaryQueueWidget();
+    }
+    e.stopPropagation();
+    e.preventDefault();
+    return;
+  }
+
+  if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
+  if (!e.target?.closest?.('#tldw-summary-queue-widget')) return;
+
+  const rows = Array.from(document.querySelectorAll('#tldw-summary-queue-widget .tldw-q-row-hit'));
+  if (!rows.length) return;
+
+  const index = rows.indexOf(e.target.closest('.tldw-q-row-hit'));
+  const next = e.key === 'ArrowDown'
+    ? rows[Math.min(rows.length - 1, index + 1)]
+    : rows[Math.max(0, index - 1)];
+
+  next?.focus();
+  e.stopPropagation();
+  e.preventDefault();
+}
+
+function openQueueSheet(id) {
+  const item = summaryQueue.find(queueItem => queueItem.id === id);
+  if (!item) return;
+
+  clearTimeout(queueSheetCloseTimer);
+  activeQueueItemId = id;
+  isSummaryQueueOpen = true;
+  renderSummaryQueueWidget();
+
+  if (isSummaryQueueItemUnread(item)) {
+    scheduleQueueMarkRead(id);
+  }
+
+  // Mount the sheet closed, then flip it open on the next frame so the
+  // transform actually transitions instead of snapping into place.
+  requestAnimationFrame(() => {
+    isQueueSheetOpen = true;
+    const panel = document.querySelector('#tldw-summary-queue-widget .tldw-q-panel');
+    if (panel) panel.dataset.sheet = 'open';
+    panel?.querySelector('.tldw-q-sheet')?.focus({ preventScroll: true });
+  });
+}
+
+function isSummaryQueueItemUnread(item) {
+  return !!item && item.status === 'done' && item.readAt === 0;
+}
+
+function scheduleQueueMarkRead(id) {
+  if (pendingMarkReadId === id && queueMarkReadTimer) return;
+
+  cancelQueueMarkRead();
+  pendingMarkReadId = id;
+  queueMarkReadTimer = setTimeout(async () => {
+    queueMarkReadTimer = null;
+    pendingMarkReadId = '';
+
+    const res = await chrome.runtime.sendMessage({ action: 'MARK_SUMMARY_QUEUE_READ', id });
+    if (res?.success && Array.isArray(res.queue)) {
+      summaryQueue = res.queue;
+      renderSummaryQueueWidget();
+    }
+  }, QUEUE_MARK_READ_DELAY_MS);
+}
+
+function cancelQueueMarkRead() {
+  clearTimeout(queueMarkReadTimer);
+  queueMarkReadTimer = null;
+  pendingMarkReadId = '';
+}
+
+function closeQueueSheet({ immediate = false } = {}) {
+  clearTimeout(queueSheetCloseTimer);
+  cancelQueueMarkRead();
+  isQueueSheetOpen = false;
+
+  if (immediate) {
+    activeQueueItemId = '';
+    return;
+  }
+
+  const panel = document.querySelector('#tldw-summary-queue-widget .tldw-q-panel');
+  if (!panel) {
+    activeQueueItemId = '';
+    return;
+  }
+
+  const focusId = activeQueueItemId;
+  panel.dataset.sheet = 'closed';
+  queueSheetCloseTimer = setTimeout(() => {
+    if (isQueueSheetOpen) return;
+    activeQueueItemId = '';
+    renderSummaryQueueWidget(focusId);
+  }, QUEUE_SHEET_TRANSITION_MS);
 }
 
 function renderSummaryQueueWidget(focusedId = '') {
@@ -867,93 +1008,260 @@ function renderSummaryQueueWidget(focusedId = '') {
 
   const stats = getSummaryQueueStats();
   const shouldShow = summaryQueue.length > 0 || isSummaryQueueOpen;
+  const scrollTop = widget.querySelector('.tldw-q-timeline')?.scrollTop || 0;
+
   widget.style.display = shouldShow ? 'block' : 'none';
   widget.classList.toggle('tldw-summary-queue-open', isSummaryQueueOpen);
 
-  const statusText = stats.pending > 0
-    ? `${stats.pending} running`
-    : stats.error > 0
-      ? `${stats.error} failed`
-      : `${stats.done} done`;
+  // Unread leads: with a minute-long turnaround, "what's ready for me" is the
+  // only thing worth reading off the collapsed pill.
+  const statusText = stats.unread > 0
+    ? `${stats.unread} new${stats.pending > 0 ? ` · ${stats.pending} running` : ''}`
+    : stats.pending > 0
+      ? `${stats.pending} running`
+      : stats.error > 0
+        ? `${stats.error} failed`
+        : `${stats.done} done`;
+
+  widget.classList.toggle('tldw-summary-queue-has-unread', stats.unread > 0);
 
   widget.innerHTML = `
     <button class="tldw-summary-queue-toggle" type="button" data-tldw-queue-action="toggle" aria-expanded="${String(isSummaryQueueOpen)}">
       <span class="tldw-summary-queue-logo">⚡</span>
       <span class="tldw-summary-queue-title">TL;DW Queue</span>
-      <span class="tldw-summary-queue-count">${stats.total}</span>
+      <span class="tldw-summary-queue-count">${stats.unread > 0 ? stats.unread : stats.total}</span>
       <span class="tldw-summary-queue-subtitle">${escapeHTML(statusText)}</span>
     </button>
-    ${isSummaryQueueOpen ? renderSummaryQueuePanel(focusedId) : ''}
+    ${isSummaryQueueOpen ? renderSummaryQueuePanel(stats) : ''}
+  `;
+
+  if (!isSummaryQueueOpen) {
+    stopQueueTimeTicker();
+    cancelQueueMarkRead();
+    return;
+  }
+
+  const activeItem = summaryQueue.find(item => item.id === activeQueueItemId);
+  if (isQueueSheetOpen && isSummaryQueueItemUnread(activeItem)) {
+    scheduleQueueMarkRead(activeItem.id);
+  }
+
+  const timeline = widget.querySelector('.tldw-q-timeline');
+  if (timeline) timeline.scrollTop = scrollTop;
+
+  if (focusedId) {
+    const row = widget.querySelector(`.tldw-q-row[data-queue-id="${CSS.escape(focusedId)}"]`);
+    row?.classList.add('tldw-q-row-focused');
+    row?.scrollIntoView({ block: 'nearest' });
+  }
+
+  startQueueTimeTicker();
+}
+
+function renderSummaryQueuePanel(stats) {
+  const active = summaryQueue.find(item => item.id === activeQueueItemId);
+
+  return `
+    <div class="tldw-q-panel" role="dialog" aria-label="TL;DW summary queue" data-sheet="${isQueueSheetOpen && active ? 'open' : 'closed'}">
+      <header class="tldw-q-head">
+        <div class="tldw-q-head-top">
+          <div>
+            <div class="tldw-q-head-title">Summary Queue</div>
+            <div class="tldw-q-head-meta">Recent summaries stay here while you browse.</div>
+          </div>
+          <button class="tldw-q-close" type="button" data-tldw-queue-action="close" aria-label="Close queue">×</button>
+        </div>
+        ${renderQueueFilters(stats)}
+      </header>
+      <div class="tldw-q-timeline">${renderQueueRows()}</div>
+      <div class="tldw-q-scrim" data-tldw-queue-action="close-sheet"></div>
+      <section class="tldw-q-sheet" tabindex="-1" aria-hidden="${String(!(isQueueSheetOpen && active))}">
+        ${active ? renderQueueSheet(active) : ''}
+      </section>
+    </div>
   `;
 }
 
-function renderSummaryQueuePanel(focusedId) {
-  const itemsHtml = summaryQueue.length
-    ? summaryQueue.map(item => renderSummaryQueueItem(item, focusedId)).join('')
-    : '<div class="tldw-summary-queue-empty">No summaries queued yet.</div>';
+function renderQueueFilters(stats) {
+  const filters = [
+    { id: 'all', label: 'All', count: stats.total },
+    { id: 'unread', label: 'New', count: stats.unread },
+    { id: 'running', label: 'Running', count: stats.pending },
+    { id: 'error', label: 'Failed', count: stats.error }
+  ];
+
+  const chips = filters.map(filter => `
+    <button class="tldw-q-chip" type="button" data-tldw-queue-action="filter" data-filter="${filter.id}"
+            aria-pressed="${String(queueFilter === filter.id)}">
+      ${filter.label}${filter.count ? `<span class="tldw-q-chip-count">${filter.count}</span>` : ''}
+    </button>
+  `).join('');
+
+  const trailing = stats.unread > 0
+    ? '<button class="tldw-q-clear" type="button" data-tldw-queue-action="mark-all-read">Mark all read</button>'
+    : stats.done
+      ? '<button class="tldw-q-clear" type="button" data-tldw-queue-action="clear-done">Clear done</button>'
+      : '';
 
   return `
-    <div class="tldw-summary-queue-panel" role="dialog" aria-label="TL;DW summary queue">
-      <div class="tldw-summary-queue-panel-header">
-        <div>
-          <div class="tldw-summary-queue-panel-title">Summary Queue</div>
-          <div class="tldw-summary-queue-panel-meta">Recent summaries stay here while you browse.</div>
-        </div>
-        <button class="tldw-summary-queue-close" type="button" data-tldw-queue-action="close" aria-label="Close queue">×</button>
-      </div>
-      <div class="tldw-summary-queue-items">
-        ${itemsHtml}
+    <div class="tldw-q-filters">
+      ${chips}
+      ${trailing}
+    </div>
+  `;
+}
+
+function renderQueueRows() {
+  const items = summaryQueue.filter(matchesQueueFilter);
+  if (!items.length) {
+    return `<div class="tldw-q-empty">${summaryQueue.length ? 'Nothing matches this filter.' : 'No summaries queued yet.'}</div>`;
+  }
+
+  const startOfToday = new Date().setHours(0, 0, 0, 0);
+  let lastLabel = '';
+
+  return items.map(item => {
+    const ts = item.updatedAt || item.createdAt || 0;
+    const label = queueDayLabel(ts, startOfToday);
+    const daymark = label === lastLabel ? '' : `<div class="tldw-q-daymark">${escapeHTML(label)}</div>`;
+    lastLabel = label;
+    return daymark + renderQueueRow(item, ts);
+  }).join('');
+}
+
+function renderQueueRow(item, ts) {
+  const id = escapeHTML(item.id);
+  const title = escapeHTML(item.videoTitle || 'YouTube video');
+  const status = item.status || 'queued';
+  const sublineText = status === 'error'
+    ? (item.error || 'Failed')
+    : (item.progress || getSummaryQueueStatusLabel(item));
+  const subline = status === 'done'
+    ? ''
+    : `<span class="tldw-q-row-sub">${escapeHTML(sublineText)}</span>`;
+  const thumb = item.videoId
+    ? `<img class="tldw-q-thumb" alt="" loading="lazy" src="https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/default.jpg">`
+    : '<span class="tldw-q-thumb"></span>';
+  const unread = isSummaryQueueItemUnread(item);
+
+  return `
+    <div class="tldw-q-row" data-status="${escapeHTML(status)}" data-queue-id="${id}" data-unread="${String(unread)}">
+      <button class="tldw-q-row-hit" type="button" data-tldw-queue-action="open" data-queue-id="${id}"
+              aria-label="${unread ? 'Unread summary' : 'Summary'} for ${title}">
+        <span class="tldw-q-node" aria-hidden="true"></span>
+        ${thumb}
+        <span class="tldw-q-row-main">
+          <span class="tldw-q-row-title">${title}</span>
+          ${subline}
+        </span>
+        <span class="tldw-q-row-time" data-tldw-ts="${ts}">${queueRelTime(ts)}</span>
+      </button>
+      <div class="tldw-q-row-tools">
+        <a href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer" title="Open video" aria-label="Open ${title} on YouTube">↗</a>
+        <button type="button" data-tldw-queue-action="remove" data-queue-id="${id}"
+                title="Remove" aria-label="Remove ${title} from queue">×</button>
       </div>
     </div>
   `;
 }
 
-function renderSummaryQueueItem(item, focusedId) {
-  const isDone = item.status === 'done';
-  const isError = item.status === 'error';
-  const isFocused = focusedId && item.id === focusedId;
-  const isCollapsed = collapsedSummaryQueueItemIds.has(item.id);
-  const statusLabel = getSummaryQueueStatusLabel(item);
-  const summaryHtml = isDone && item.summary && !isCollapsed
-    ? `<div class="tldw-summary-queue-result ${isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr'}">${parseMarkdown(item.summary)}</div>`
-    : '';
-  const errorHtml = isError && item.error
-    ? `<div class="tldw-summary-queue-error">${escapeHTML(item.error)}</div>`
+function renderQueueSheet(item) {
+  const id = escapeHTML(item.id);
+  const title = escapeHTML(item.videoTitle || 'YouTube video');
+  const ts = item.updatedAt || item.createdAt || 0;
+  const art = item.videoId
+    ? `--tldw-q-art:url('https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/mqdefault.jpg')`
     : '';
 
+  const body = item.status === 'error'
+    ? `<div class="tldw-summary-queue-error">${escapeHTML(item.error || 'Summary failed.')}</div>`
+    : item.summary
+      ? `<div class="tldw-q-sheet-summary ${isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr'}">${parseMarkdown(item.summary)}</div>`
+      : `<div class="tldw-q-sheet-pending"><span class="tldw-q-sheet-spinner"></span>${escapeHTML(item.progress || 'Working on it...')}</div>`;
+
   return `
-    <article class="tldw-summary-queue-item ${isFocused ? 'tldw-summary-queue-item-focused' : ''}" data-status="${escapeHTML(item.status || 'queued')}">
-      <div class="tldw-summary-queue-item-top" ${isDone && item.summary ? `data-tldw-queue-action="toggle-summary" data-queue-id="${escapeHTML(item.id)}"` : ''}>
-        <a class="tldw-summary-queue-video-title" href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">
-          ${escapeHTML(item.videoTitle || 'YouTube video')}
-        </a>
-        <span class="tldw-summary-queue-status">${escapeHTML(statusLabel)}</span>
+    <div class="tldw-q-grip" data-tldw-queue-action="close-sheet" aria-hidden="true"></div>
+    <header class="tldw-q-sheet-head" style="${art}">
+      <button class="tldw-q-sheet-back" type="button" data-tldw-queue-action="close-sheet" aria-label="Back to timeline">←</button>
+      <div class="tldw-q-sheet-titles">
+        <div class="tldw-q-sheet-title">${title}</div>
+        <div class="tldw-q-sheet-meta" data-status="${escapeHTML(item.status || 'queued')}">
+          <span class="tldw-q-node" aria-hidden="true"></span>
+          ${escapeHTML(getSummaryQueueStatusLabel(item))} · ${queueRelTime(ts)}
+        </div>
       </div>
-      <div class="tldw-summary-queue-progress">${escapeHTML(item.progress || '')}</div>
-      ${summaryHtml}
-      ${errorHtml}
-      <div class="tldw-summary-queue-actions">
-        ${isDone ? `<button type="button" data-tldw-queue-action="copy" data-queue-id="${escapeHTML(item.id)}">Copy</button>` : ''}
-        ${isError ? `<button type="button" data-tldw-queue-action="retry" data-queue-id="${escapeHTML(item.id)}">Retry</button>` : ''}
-        <a href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">Open video</a>
-        <button class="tldw-summary-queue-remove" type="button" data-tldw-queue-action="remove" data-queue-id="${escapeHTML(item.id)}" aria-label="Remove ${escapeHTML(item.videoTitle || 'YouTube video')} from queue">Remove</button>
-      </div>
-    </article>
+    </header>
+    <div class="tldw-q-sheet-body">${body}</div>
+    <footer class="tldw-q-sheet-actions">
+      ${item.summary ? `<button type="button" data-tldw-queue-action="copy" data-queue-id="${id}">Copy</button>` : ''}
+      ${item.status === 'error' ? `<button type="button" data-tldw-queue-action="retry" data-queue-id="${id}">Retry</button>` : ''}
+      <a href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">Open video</a>
+      <button class="tldw-q-sheet-remove" type="button" data-tldw-queue-action="remove" data-queue-id="${id}">Remove</button>
+    </footer>
   `;
 }
 
+function matchesQueueFilter(item) {
+  if (queueFilter === 'all') return true;
+  if (queueFilter === 'unread') return isSummaryQueueItemUnread(item);
+  if (queueFilter === 'running') return item.status !== 'done' && item.status !== 'error';
+  return item.status === queueFilter;
+}
+
+function queueDayLabel(ts, startOfToday) {
+  if (!ts) return 'Earlier';
+  if (ts >= startOfToday) return 'Today';
+  if (ts >= startOfToday - 86400000) return 'Yesterday';
+  if (ts >= startOfToday - 6 * 86400000) {
+    return new Date(ts).toLocaleDateString(undefined, { weekday: 'long' });
+  }
+  return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+function queueRelTime(ts) {
+  if (!ts) return '';
+  const seconds = Math.max(0, Math.round((Date.now() - ts) / 1000));
+  if (seconds < 60) return 'now';
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h`;
+  return `${Math.floor(seconds / 86400)}d`;
+}
+
+// Relative timestamps go stale in a tab left open for hours, and a full
+// re-render would drop scroll position and focus.
+function startQueueTimeTicker() {
+  if (queueTimeTicker) return;
+  queueTimeTicker = setInterval(() => {
+    document.querySelectorAll('#tldw-summary-queue-widget [data-tldw-ts]').forEach(el => {
+      el.textContent = queueRelTime(Number(el.dataset.tldwTs) || 0);
+    });
+  }, 60000);
+}
+
+function stopQueueTimeTicker() {
+  clearInterval(queueTimeTicker);
+  queueTimeTicker = null;
+}
+
+// Mirrors getQueueStats in summary-queue.js; content scripts cannot import it.
 function getSummaryQueueStats() {
   return summaryQueue.reduce((stats, item) => {
     stats.total += 1;
-    if (item.status === 'done') stats.done += 1;
-    else if (item.status === 'error') stats.error += 1;
-    else stats.pending += 1;
+    if (item.status === 'done') {
+      stats.done += 1;
+      if (isSummaryQueueItemUnread(item)) stats.unread += 1;
+    } else if (item.status === 'error') {
+      stats.error += 1;
+    } else {
+      stats.pending += 1;
+    }
     return stats;
   }, {
     total: 0,
     pending: 0,
     done: 0,
-    error: 0
+    error: 0,
+    unread: 0
   });
 }
 

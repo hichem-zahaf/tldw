@@ -25,9 +25,35 @@ export function buildQueueItem({
     transcript: '',
     error: '',
     cached: false,
+    readAt: 0,
     createdAt: now,
     updatedAt: now
   };
+}
+
+// A missing `readAt` means the item predates read tracking, so it counts as
+// read. Every completion writes `readAt: 0` explicitly, which is what marks a
+// summary as new.
+export function isQueueItemUnread(item) {
+  return !!item && item.status === 'done' && item.readAt === 0;
+}
+
+export function countUnreadQueueItems(queue) {
+  return (Array.isArray(queue) ? queue : []).filter(isQueueItemUnread).length;
+}
+
+// Deliberately preserves order and leaves `updatedAt` alone: reading a summary
+// is not activity on the video, and bumping it would reshuffle the timeline.
+export function markQueueItemsRead(queue, ids, now = Date.now()) {
+  const targets = ids === 'all'
+    ? null
+    : new Set(Array.isArray(ids) ? ids : [ids]);
+
+  return (Array.isArray(queue) ? queue : []).map(item => {
+    if (targets && !targets.has(item.id)) return item;
+    if (!isQueueItemUnread(item)) return item;
+    return { ...item, readAt: now };
+  });
 }
 
 export function mergeQueueItem(queue, patch) {
@@ -54,6 +80,7 @@ export function getQueueStats(queue) {
 
     if (item.status === 'done') {
       stats.done += 1;
+      if (isQueueItemUnread(item)) stats.unread += 1;
     } else if (item.status === 'error') {
       stats.error += 1;
     } else {
@@ -65,6 +92,7 @@ export function getQueueStats(queue) {
     total: 0,
     pending: 0,
     done: 0,
-    error: 0
+    error: 0,
+    unread: 0
   });
 }

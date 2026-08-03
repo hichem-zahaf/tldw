@@ -3,7 +3,10 @@ import {
   SUMMARY_QUEUE_LIMIT,
   buildQueueItem,
   mergeQueueItem,
-  getQueueStats
+  getQueueStats,
+  isQueueItemUnread,
+  countUnreadQueueItems,
+  markQueueItemsRead
 } from './summary-queue.js';
 
 const baseJob = buildQueueItem({
@@ -98,16 +101,59 @@ assert.deepEqual(
   const stats = getQueueStats([
     { id: 'queued', status: 'queued' },
     { id: 'running', status: 'running' },
-    { id: 'done', status: 'done' },
+    { id: 'done', status: 'done', readAt: 0 },
+    { id: 'read', status: 'done', readAt: 900 },
     { id: 'error', status: 'error' }
   ]);
 
   assert.deepEqual(stats, {
-    total: 4,
+    total: 5,
     pending: 2,
-    done: 1,
-    error: 1
+    done: 2,
+    error: 1,
+    unread: 1
   });
+}
+
+// Read tracking
+{
+  assert.equal(buildQueueItem({ id: 'x', videoId: 'v' }).readAt, 0);
+
+  // Only finished summaries can be unread: nothing to read while queued or failed.
+  assert.equal(isQueueItemUnread({ status: 'done', readAt: 0 }), true);
+  assert.equal(isQueueItemUnread({ status: 'done', readAt: 123 }), false);
+  assert.equal(isQueueItemUnread({ status: 'running', readAt: 0 }), false);
+  assert.equal(isQueueItemUnread({ status: 'error', readAt: 0 }), false);
+
+  // Items stored before read tracking existed must not all light up as new.
+  assert.equal(isQueueItemUnread({ status: 'done', summary: 'legacy' }), false);
+  assert.equal(countUnreadQueueItems([
+    { id: 'a', status: 'done', readAt: 0 },
+    { id: 'b', status: 'done' },
+    { id: 'c', status: 'done', readAt: 0 }
+  ]), 2);
+}
+
+{
+  const queue = [
+    { id: 'a', status: 'done', readAt: 0, updatedAt: 300 },
+    { id: 'b', status: 'done', readAt: 0, updatedAt: 200 },
+    { id: 'c', status: 'running', readAt: 0, updatedAt: 100 }
+  ];
+
+  const afterOne = markQueueItemsRead(queue, 'b', 5000);
+  assert.deepEqual(afterOne.map(item => item.id), ['a', 'b', 'c']);
+  assert.equal(afterOne[0].readAt, 0);
+  assert.equal(afterOne[1].readAt, 5000);
+  // Reading is not activity on the video, so ordering must not shift.
+  assert.equal(afterOne[1].updatedAt, 200);
+
+  const afterAll = markQueueItemsRead(queue, 'all', 6000);
+  assert.deepEqual(afterAll.map(item => item.readAt), [6000, 6000, 0]);
+  assert.equal(countUnreadQueueItems(afterAll), 0);
+
+  // Original queue untouched.
+  assert.equal(queue[0].readAt, 0);
 }
 
 console.log('summary-queue tests passed');

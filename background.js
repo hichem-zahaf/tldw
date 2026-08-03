@@ -4,7 +4,9 @@ import { getSummaryProgressMessage } from './summary-progress.js';
 import {
   SUMMARY_QUEUE_KEY,
   buildQueueItem,
+  countUnreadQueueItems,
   getQueueStats,
+  markQueueItemsRead,
   mergeQueueItem
 } from './summary-queue.js';
 
@@ -51,8 +53,31 @@ chrome.runtime.onInstalled.addListener(async () => {
   const current = await chrome.storage.local.get(null);
   const newSettings = { ...DEFAULT_SETTINGS, ...current };
   await chrome.storage.local.set(newSettings);
+  await refreshUnreadBadge();
   console.log('[TL;DW] Extension initialized.');
 });
+
+// The service worker is torn down when idle, so the badge is restored from
+// storage every time it spins back up.
+chrome.runtime.onStartup.addListener(() => {
+  refreshUnreadBadge();
+});
+refreshUnreadBadge();
+
+function updateUnreadBadge(queue) {
+  const unread = countUnreadQueueItems(queue);
+  try {
+    chrome.action.setBadgeText({ text: unread ? String(unread) : '' });
+    chrome.action.setBadgeBackgroundColor({ color: '#ff0055' });
+    chrome.action.setBadgeTextColor?.({ color: '#ffffff' });
+  } catch (_) {}
+}
+
+async function refreshUnreadBadge() {
+  try {
+    updateUnreadBadge(await getStoredSummaryQueue());
+  } catch (_) {}
+}
 
 // Message handling
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
@@ -98,6 +123,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'MARK_SUMMARY_QUEUE_READ') {
+    handleMarkSummaryQueueRead(request.all ? 'all' : request.id)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (request.action === 'CLEAR_DONE_SUMMARY_QUEUE_ITEMS') {
+    handleClearDoneSummaryQueueItems()
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
   if (request.action === 'GET_SETTINGS') {
     chrome.storage.local.get(DEFAULT_SETTINGS).then(settings => sendResponse({ success: true, settings }));
     return true;
@@ -121,7 +160,32 @@ async function getStoredSummaryQueue() {
 
 async function saveSummaryQueue(queue) {
   await chrome.storage.local.set({ [SUMMARY_QUEUE_KEY]: queue });
+  updateUnreadBadge(queue);
   return queue;
+}
+
+async function markSummaryQueueRead(ids) {
+  const nextWrite = summaryQueueWriteLock.then(async () => {
+    const queue = await getStoredSummaryQueue();
+    const nextQueue = markQueueItemsRead(queue, ids);
+    if (countUnreadQueueItems(nextQueue) === countUnreadQueueItems(queue)) {
+      return queue;
+    }
+    await saveSummaryQueue(nextQueue);
+    return nextQueue;
+  });
+
+  summaryQueueWriteLock = nextWrite.catch(() => {});
+  return await nextWrite;
+}
+
+async function handleMarkSummaryQueueRead(ids) {
+  const queue = await markSummaryQueueRead(ids);
+  return {
+    success: true,
+    queue,
+    stats: getQueueStats(queue)
+  };
 }
 
 async function updateSummaryQueueItem(patch, { insertIfMissing = true } = {}) {
@@ -155,6 +219,27 @@ async function removeSummaryQueueItem(id) {
 
   summaryQueueWriteLock = nextWrite.catch(() => {});
   return await nextWrite;
+}
+
+async function clearDoneSummaryQueueItems() {
+  const nextWrite = summaryQueueWriteLock.then(async () => {
+    const queue = await getStoredSummaryQueue();
+    const nextQueue = queue.filter(item => item.status !== 'done');
+    await saveSummaryQueue(nextQueue);
+    return nextQueue;
+  });
+
+  summaryQueueWriteLock = nextWrite.catch(() => {});
+  return await nextWrite;
+}
+
+async function handleClearDoneSummaryQueueItems() {
+  const queue = await clearDoneSummaryQueueItems();
+  return {
+    success: true,
+    queue,
+    stats: getQueueStats(queue)
+  };
 }
 
 async function handleGetSummaryQueue() {
@@ -218,7 +303,8 @@ async function handleRetrySummaryQueueItem(id) {
     progress: 'Queued',
     error: '',
     summary: existing.summary || '',
-    transcript: existing.transcript || ''
+    transcript: existing.transcript || '',
+    readAt: 0
   });
 
   processSummaryQueueItem(existing, true).catch(err => {
@@ -272,7 +358,8 @@ async function processSummaryQueueItem(item, forceRefresh = false) {
       summary: response.summary,
       transcript: response.transcript,
       cached: !!response.cached,
-      error: ''
+      error: '',
+      readAt: 0
     }, { insertIfMissing: false });
   } catch (err) {
     await updateSummaryQueueItem({
