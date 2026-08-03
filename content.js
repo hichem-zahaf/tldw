@@ -17,6 +17,14 @@ const collapsedSummaryQueueItemIds = new Set();
 
 const SUMMARY_QUEUE_KEY = 'tldw_summary_queue';
 
+const FEED_CARD_SELECTOR = [
+  'ytd-rich-item-renderer',
+  'ytd-video-renderer',
+  'ytd-compact-video-renderer',
+  'ytd-grid-video-renderer',
+  'yt-lockup-view-model'
+].join(',');
+
 const LEVEL_LABELS = {
   1: 'Brief',
   2: 'Short',
@@ -25,10 +33,14 @@ const LEVEL_LABELS = {
   5: 'Full'
 };
 
-// Observe DOM mutations for infinite scrolling feed items
-const feedObserver = new MutationObserver(debounce(() => {
-  enhanceFeedCards();
-}, 400));
+// Observe YouTube's mutations for infinite scrolling feed items, while
+// ignoring DOM work performed by this extension itself.
+const scheduleFeedEnhancement = debounce(enhanceFeedCards, 400);
+const feedObserver = new MutationObserver((mutations) => {
+  if (mutations.some(mutation => !isTldwOwnedMutation(mutation))) {
+    scheduleFeedEnhancement();
+  }
+});
 
 // Initialize on page load
 initTLDW();
@@ -495,23 +507,17 @@ function copySummaryToClipboard() {
  * Enhance Feed Video Cards on YouTube Home, Search, and Recommendations
  */
 function enhanceFeedCards() {
-  const cardSelectors = [
-    'ytd-rich-item-renderer',
-    'ytd-video-renderer',
-    'ytd-compact-video-renderer',
-    'ytd-grid-video-renderer',
-    'yt-lockup-view-model'
-  ];
-
-  const cards = document.querySelectorAll(cardSelectors.join(','));
+  // YouTube sometimes nests a newer card renderer inside a legacy one. Only
+  // enhance the innermost renderer so mutation passes cannot move one pill
+  // back and forth between two cards.
+  const cards = Array.from(document.querySelectorAll(FEED_CARD_SELECTOR))
+    .filter(card => !card.querySelector(FEED_CARD_SELECTOR));
 
   cards.forEach(card => {
-    const existingPill = card.querySelector('.tldw-feed-pill');
+    const existingPill = Array.from(card.querySelectorAll('.tldw-feed-pill'))
+      .find(pill => pill.closest(FEED_CARD_SELECTOR) === card);
     if (existingPill) {
       markFeedCardEnhanced(card);
-      if (existingPill.classList.contains('tldw-feed-pill-overlay') && existingPill.parentElement !== card) {
-        insertFeedPill(card, existingPill);
-      }
       return;
     }
 
@@ -622,6 +628,8 @@ function insertFeedPill(card, pill) {
 
   if (thumbnail) {
     pill.classList.add('tldw-feed-pill-overlay');
+    // YouTube replaces the thumbnail's internal DOM when its hover preview
+    // starts. Keep the action on the stable card so it survives that swap.
     card.style.position = card.style.position || 'relative';
     card.appendChild(pill);
     return;
@@ -699,34 +707,43 @@ function findQueueItemByVideoId(videoId) {
 function updateFeedPillStates() {
   document.querySelectorAll('.tldw-feed-pill').forEach(pill => {
     const item = findQueueItemByVideoId(pill.dataset.videoId);
+    let label = '⚡ Summarize';
+    let title = 'Add this video to the TL;DW summary queue';
+    let stateClass = '';
 
-    pill.disabled = false;
-    pill.classList.remove('tldw-feed-pill-running', 'tldw-feed-pill-done', 'tldw-feed-pill-error');
-
-    if (!item) {
-      pill.innerHTML = '⚡ Summarize';
-      pill.title = 'Add this video to the TL;DW summary queue';
-      return;
+    if (item?.status === 'done') {
+      label = '✓ In Queue';
+      title = 'Summary ready. Click to open the TL;DW queue.';
+      stateClass = 'tldw-feed-pill-done';
+    } else if (item?.status === 'error') {
+      label = '⚠ Queue Error';
+      title = item.error || 'Summary failed. Click to open the TL;DW queue.';
+      stateClass = 'tldw-feed-pill-error';
+    } else if (item) {
+      label = item.status === 'running' ? '⏳ Summarizing' : 'Queued';
+      title = item.progress || 'Summary queued.';
+      stateClass = 'tldw-feed-pill-running';
     }
 
-    if (item.status === 'done') {
-      pill.innerHTML = '✓ In Queue';
-      pill.title = 'Summary ready. Click to open the TL;DW queue.';
-      pill.classList.add('tldw-feed-pill-done');
-      return;
-    }
+    if (pill.disabled) pill.disabled = false;
+    if (pill.textContent !== label) pill.textContent = label;
+    if (pill.title !== title) pill.title = title;
 
-    if (item.status === 'error') {
-      pill.innerHTML = '⚠ Queue Error';
-      pill.title = item.error || 'Summary failed. Click to open the TL;DW queue.';
-      pill.classList.add('tldw-feed-pill-error');
-      return;
-    }
-
-    pill.innerHTML = item.status === 'running' ? '⏳ Summarizing' : 'Queued';
-    pill.title = item.progress || 'Summary queued.';
-    pill.classList.add('tldw-feed-pill-running');
+    ['tldw-feed-pill-running', 'tldw-feed-pill-done', 'tldw-feed-pill-error']
+      .forEach(className => pill.classList.toggle(className, className === stateClass));
   });
+}
+
+function isTldwOwnedMutation(mutation) {
+  const target = mutation.target?.nodeType === Node.ELEMENT_NODE
+    ? mutation.target
+    : mutation.target?.parentElement;
+
+  return !!target?.closest([
+    '.tldw-feed-pill',
+    '#tldw-summary-container',
+    '#tldw-summary-queue-widget'
+  ].join(','));
 }
 
 function injectSummaryQueueWidget() {
@@ -874,9 +891,6 @@ function renderSummaryQueueItem(item, focusedId) {
   const summaryHtml = isDone && item.summary && !isCollapsed
     ? `<div class="tldw-summary-queue-result ${isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr'}">${parseMarkdown(item.summary)}</div>`
     : '';
-  const collapsedHtml = isDone && item.summary && isCollapsed
-    ? '<div class="tldw-summary-queue-collapsed">Summary collapsed.</div>'
-    : '';
   const errorHtml = isError && item.error
     ? `<div class="tldw-summary-queue-error">${escapeHTML(item.error)}</div>`
     : '';
@@ -891,7 +905,6 @@ function renderSummaryQueueItem(item, focusedId) {
       </div>
       <div class="tldw-summary-queue-progress">${escapeHTML(item.progress || '')}</div>
       ${summaryHtml}
-      ${collapsedHtml}
       ${errorHtml}
       <div class="tldw-summary-queue-actions">
         ${isDone ? `<button type="button" data-tldw-queue-action="copy" data-queue-id="${escapeHTML(item.id)}">Copy</button>` : ''}
