@@ -91,6 +91,13 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'REMOVE_SUMMARY_QUEUE_ITEM') {
+    handleRemoveSummaryQueueItem(request.id)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
   if (request.action === 'GET_SETTINGS') {
     chrome.storage.local.get(DEFAULT_SETTINGS).then(settings => sendResponse({ success: true, settings }));
     return true;
@@ -117,13 +124,31 @@ async function saveSummaryQueue(queue) {
   return queue;
 }
 
-async function updateSummaryQueueItem(patch) {
+async function updateSummaryQueueItem(patch, { insertIfMissing = true } = {}) {
   const nextWrite = summaryQueueWriteLock.then(async () => {
     const queue = await getStoredSummaryQueue();
+    const itemExists = queue.some(item => item.id === patch.id);
+
+    if (!insertIfMissing && !itemExists) {
+      return queue;
+    }
+
     const nextQueue = mergeQueueItem(queue, {
       ...patch,
       updatedAt: patch.updatedAt || Date.now()
     });
+    await saveSummaryQueue(nextQueue);
+    return nextQueue;
+  });
+
+  summaryQueueWriteLock = nextWrite.catch(() => {});
+  return await nextWrite;
+}
+
+async function removeSummaryQueueItem(id) {
+  const nextWrite = summaryQueueWriteLock.then(async () => {
+    const queue = await getStoredSummaryQueue();
+    const nextQueue = queue.filter(item => item.id !== id);
     await saveSummaryQueue(nextQueue);
     return nextQueue;
   });
@@ -203,13 +228,26 @@ async function handleRetrySummaryQueueItem(id) {
   return await handleGetSummaryQueue();
 }
 
+async function handleRemoveSummaryQueueItem(id) {
+  if (!id) {
+    throw new Error('Missing queue item ID.');
+  }
+
+  const queue = await removeSummaryQueueItem(id);
+  return {
+    success: true,
+    queue,
+    stats: getQueueStats(queue)
+  };
+}
+
 async function processSummaryQueueItem(item, forceRefresh = false) {
   try {
     await updateSummaryQueueItem({
       id: item.id,
       status: 'running',
       progress: getSummaryProgressMessage('checkingCache')
-    });
+    }, { insertIfMissing: false });
 
     const response = await handleGetSummary({
       videoId: item.videoId,
@@ -224,7 +262,7 @@ async function processSummaryQueueItem(item, forceRefresh = false) {
         id: item.id,
         status: 'running',
         progress: getSummaryProgressMessage(step)
-      });
+      }, { insertIfMissing: false });
     });
 
     await updateSummaryQueueItem({
@@ -235,14 +273,14 @@ async function processSummaryQueueItem(item, forceRefresh = false) {
       transcript: response.transcript,
       cached: !!response.cached,
       error: ''
-    });
+    }, { insertIfMissing: false });
   } catch (err) {
     await updateSummaryQueueItem({
       id: item.id,
       status: 'error',
       progress: 'Failed',
       error: err.message || String(err)
-    });
+    }, { insertIfMissing: false });
     throw err;
   }
 }

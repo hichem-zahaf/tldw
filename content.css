@@ -913,3 +913,12 @@
 .tldw-summary-queue-actions a:hover {
   background: var(--tldw-control-hover-bg);
 }
+
+.tldw-summary-queue-actions .tldw-summary-queue-remove {
+  color: #ff6767;
+  border-color: rgba(255, 77, 77, 0.28);
+}
+
+.tldw-summary-queue-actions .tldw-summary-queue-remove:hover {
+  background: rgba(255, 77, 77, 0.12);
+}

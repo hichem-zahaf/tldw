@@ -796,6 +796,21 @@ function injectSummaryQueueWidget() {
         renderSummaryQueueWidget(id);
         updateFeedPillStates();
       }
+      return;
+    }
+
+    if (action === 'remove') {
+      actionEl.textContent = 'Removing...';
+      const res = await chrome.runtime.sendMessage({
+        action: 'REMOVE_SUMMARY_QUEUE_ITEM',
+        id
+      });
+      if (res?.success) {
+        collapsedSummaryQueueItemIds.delete(id);
+        summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue.filter(queueItem => queueItem.id !== id);
+        renderSummaryQueueWidget();
+        updateFeedPillStates();
+      }
     }
   });
 
@@ -882,6 +897,7 @@ function renderSummaryQueueItem(item, focusedId) {
         ${isDone ? `<button type="button" data-tldw-queue-action="copy" data-queue-id="${escapeHTML(item.id)}">Copy</button>` : ''}
         ${isError ? `<button type="button" data-tldw-queue-action="retry" data-queue-id="${escapeHTML(item.id)}">Retry</button>` : ''}
         <a href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">Open video</a>
+        <button class="tldw-summary-queue-remove" type="button" data-tldw-queue-action="remove" data-queue-id="${escapeHTML(item.id)}" aria-label="Remove ${escapeHTML(item.videoTitle || 'YouTube video')} from queue">Remove</button>
       </div>
     </article>
   `;
