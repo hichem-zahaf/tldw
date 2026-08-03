@@ -6,7 +6,8 @@ import {
   getQueueStats,
   isQueueItemUnread,
   countUnreadQueueItems,
-  markQueueItemsRead
+  markQueueItemsRead,
+  didQueueItemFinish
 } from './summary-queue.js';
 
 const baseJob = buildQueueItem({
@@ -154,6 +155,36 @@ assert.deepEqual(
 
   // Original queue untouched.
   assert.equal(queue[0].readAt, 0);
+}
+
+{
+  const prev = [
+    { id: 'a', status: 'running' },
+    { id: 'b', status: 'queued' }
+  ];
+  const nextDone = [
+    { id: 'a', status: 'done' },
+    { id: 'b', status: 'queued' }
+  ];
+  const nextError = [
+    { id: 'a', status: 'error' },
+    { id: 'b', status: 'queued' }
+  ];
+  const stillRunning = [
+    { id: 'a', status: 'running' },
+    { id: 'b', status: 'running' }
+  ];
+  const markReadOnly = [
+    { id: 'a', status: 'done', readAt: 1 },
+    { id: 'b', status: 'queued' }
+  ];
+
+  assert.equal(didQueueItemFinish(prev, nextDone), true);
+  assert.equal(didQueueItemFinish(prev, nextError), true);
+  assert.equal(didQueueItemFinish(prev, stillRunning), false);
+  // Already-done → still-done (e.g. mark-read) must not re-open the tray.
+  assert.equal(didQueueItemFinish(nextDone, markReadOnly), false);
+  assert.equal(didQueueItemFinish([], nextDone), false);
 }
 
 console.log('summary-queue tests passed');

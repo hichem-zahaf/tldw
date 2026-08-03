@@ -96,3 +96,16 @@ export function getQueueStats(queue) {
     unread: 0
   });
 }
+
+/** True when an in-flight item (queued/running) just hit a terminal status. */
+export function didQueueItemFinish(prevQueue, nextQueue) {
+  const prevById = new Map(
+    (Array.isArray(prevQueue) ? prevQueue : []).map(item => [item.id, item])
+  );
+
+  return (Array.isArray(nextQueue) ? nextQueue : []).some(item => {
+    if (item.status !== 'done' && item.status !== 'error') return false;
+    const prev = prevById.get(item.id);
+    return !!prev && prev.status !== 'done' && prev.status !== 'error';
+  });
+}

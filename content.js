@@ -93,9 +93,17 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
   if (areaName !== 'local') return;
 
   if (changes[SUMMARY_QUEUE_KEY]) {
+    const prevQueue = Array.isArray(changes[SUMMARY_QUEUE_KEY].oldValue)
+      ? changes[SUMMARY_QUEUE_KEY].oldValue
+      : [];
     summaryQueue = Array.isArray(changes[SUMMARY_QUEUE_KEY].newValue)
       ? changes[SUMMARY_QUEUE_KEY].newValue
       : [];
+    // Pop the tray open when an in-flight job finishes so "1 new" isn't
+    // buried behind a collapsed pill.
+    if (didSummaryQueueItemFinish(prevQueue, summaryQueue)) {
+      isSummaryQueueOpen = true;
+    }
     renderSummaryQueueWidget();
     updateFeedPillStates();
   }
@@ -1330,21 +1338,22 @@ function renderSummaryQueueWidget(focusedId = '') {
   if (!widget) return;
 
   const stats = getSummaryQueueStats();
-  const shouldShow = summaryQueue.length > 0 || isSummaryQueueOpen;
+  // Collapsed pill is only for things that need attention — unread, in-flight,
+  // or failed. Fully-read done items stay in the panel history, not the HUD.
+  const hasActionable = stats.unread > 0 || stats.pending > 0 || stats.error > 0;
+  const shouldShow = hasActionable || isSummaryQueueOpen;
   const scrollTop = widget.querySelector('.tldw-q-timeline')?.scrollTop || 0;
 
   widget.style.display = shouldShow ? 'block' : 'none';
   widget.classList.toggle('tldw-summary-queue-open', isSummaryQueueOpen);
 
-  // Unread leads: with a minute-long turnaround, "what's ready for me" is the
-  // only thing worth reading off the collapsed pill.
   const statusText = stats.unread > 0
     ? `${stats.unread} new${stats.pending > 0 ? ` · ${stats.pending} running` : ''}`
     : stats.pending > 0
       ? `${stats.pending} running`
       : stats.error > 0
         ? `${stats.error} failed`
-        : `${stats.done} done`;
+        : '';
 
   widget.classList.toggle('tldw-summary-queue-has-unread', stats.unread > 0);
 
@@ -1353,7 +1362,7 @@ function renderSummaryQueueWidget(focusedId = '') {
       <span class="tldw-summary-queue-logo">⚡</span>
       <span class="tldw-summary-queue-title">TL;DW Queue</span>
       ${stats.unread > 0 ? `<span class="tldw-summary-queue-count">${stats.unread}</span>` : ''}
-      <span class="tldw-summary-queue-subtitle">${escapeHTML(statusText)}</span>
+      ${statusText ? `<span class="tldw-summary-queue-subtitle">${escapeHTML(statusText)}</span>` : ''}
     </button>
     ${isSummaryQueueOpen ? renderSummaryQueuePanel(stats) : ''}
   `;
@@ -1601,6 +1610,19 @@ function getSummaryQueueStats() {
     done: 0,
     error: 0,
     unread: 0
+  });
+}
+
+// Mirrors didQueueItemFinish in summary-queue.js.
+function didSummaryQueueItemFinish(prevQueue, nextQueue) {
+  const prevById = new Map(
+    (Array.isArray(prevQueue) ? prevQueue : []).map(item => [item.id, item])
+  );
+
+  return (Array.isArray(nextQueue) ? nextQueue : []).some(item => {
+    if (item.status !== 'done' && item.status !== 'error') return false;
+    const prev = prevById.get(item.id);
+    return !!prev && prev.status !== 'done' && prev.status !== 'error';
   });
 }
 

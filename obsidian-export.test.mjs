@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {
   OBSIDIAN_URI_SAFE_LENGTH,
+  applyInlineHighlight,
   buildObsidianNewUri,
   buildObsidianOpenVaultUri,
   buildObsidianNoteMarkdown,
@@ -42,17 +43,38 @@ import {
 }
 
 {
+  assert.equal(
+    applyInlineHighlight('Hello key insight world', 'key insight'),
+    'Hello ==key insight== world'
+  );
+  // Selection collapses whitespace; match against the source markdown flexibly.
+  assert.equal(
+    applyInlineHighlight('Hello key\ninsight world', 'key insight'),
+    'Hello ==key\ninsight== world'
+  );
+  assert.equal(
+    applyInlineHighlight('already ==key insight== wrapped', 'key insight'),
+    'already ==key insight== wrapped'
+  );
+  assert.equal(
+    applyInlineHighlight('no match here', 'missing'),
+    'no match here'
+  );
+}
+
+{
   const md = buildObsidianNoteMarkdown({
     videoTitle: 'Demo Video',
     videoUrl: 'https://www.youtube.com/watch?v=abc123',
-    summary: 'Full summary body',
+    summary: 'Full summary with the key insight inside.',
     highlight: 'the key insight',
     date: '2026-08-03'
   });
 
-  assert.match(md, /\*\*the key insight\*\*/);
-  assert.match(md, /## Summary\n\nFull summary body\n$/);
-  assert.ok(md.indexOf('**the key insight**') < md.indexOf('## Summary'));
+  assert.match(md, /## Summary\n\nFull summary with ==the key insight== inside\.\n$/);
+  assert.doesNotMatch(md, /\*\*the key insight\*\*/);
+  // Highlight stays in the summary body — never duplicated above it.
+  assert.ok(md.indexOf('==the key insight==') > md.indexOf('## Summary'));
 }
 
 {

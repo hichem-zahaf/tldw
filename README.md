@@ -56,7 +56,7 @@ git clone https://github.com/yazinsai/tldw.git
 - **Watch Page**: Open any YouTube video. The `⚡ TL;DW` summary container appears automatically. Click **✨ Summarize Video** or adjust format/level controls.
 - **Feed Cards**: On the YouTube Home page or search results, click `⚡ Summarize` below any video card to add it to the summary queue. Open the top-right `TL;DW Queue` tray to review running and completed summaries together.
 - **Extension Popup**: Click the toolbar extension icon on any active YouTube tab to quickly check cache or generate a summary with custom level/format settings.
-- **Obsidian (optional)**: In Settings, enable Save to Obsidian and enter your vault name. On a summary, click ★ to bookmark the full note, or select text and click **Save highlight**. Notes land at `TLDW/{video title}.md` with a `[[YYYY-MM-DD]]` date link and open in Obsidian.
+- **Obsidian (optional)**: In Settings, enable Save to Obsidian and enter your vault name. On a summary, click ★ to bookmark the full note, or select text and click **Save highlight**. Notes land at `TLDW/{video title}.md` with a `[[YYYY-MM-DD]]` date link; highlights wrap the selected text in-place with `==…==`.
 
 ---
 

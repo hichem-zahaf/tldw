@@ -21,6 +21,41 @@ export function formatObsidianDate(date = new Date()) {
   return `${year}-${month}-${day}`;
 }
 
+/**
+ * Wrap the first occurrence of `highlight` in Obsidian `==…==` syntax.
+ * Selection text collapses whitespace, so matching tolerates that.
+ */
+export function applyInlineHighlight(summary, highlight) {
+  const summaryText = String(summary || '');
+  const highlightText = String(highlight || '').trim();
+  if (!highlightText || !summaryText) return summaryText;
+
+  // Already highlighted — leave alone.
+  if (summaryText.includes(`==${highlightText}==`)) return summaryText;
+
+  const exactIdx = summaryText.indexOf(highlightText);
+  if (exactIdx !== -1) {
+    return (
+      summaryText.slice(0, exactIdx) +
+      `==${highlightText}==` +
+      summaryText.slice(exactIdx + highlightText.length)
+    );
+  }
+
+  const escaped = highlightText
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/\s+/g, '\\s+');
+  const re = new RegExp(escaped);
+  const match = summaryText.match(re);
+  if (!match) return summaryText;
+
+  return (
+    summaryText.slice(0, match.index) +
+    `==${match[0]}==` +
+    summaryText.slice(match.index + match[0].length)
+  );
+}
+
 export function buildObsidianNoteMarkdown({
   videoTitle,
   videoUrl,
@@ -31,21 +66,22 @@ export function buildObsidianNoteMarkdown({
   const title = String(videoTitle || '').trim() || 'Untitled';
   const dateStr = date || formatObsidianDate();
   const sourceUrl = String(videoUrl || '').trim();
-  const summaryText = String(summary || '').trim();
-  const highlightText = String(highlight || '').trim();
+  const summaryText = applyInlineHighlight(
+    String(summary || '').trim(),
+    highlight
+  );
 
   // No H1: the filename is the note title, and Obsidian renders it inline.
   const lines = [
     `Watched: [[${dateStr}]]`,
     sourceUrl ? `Source: [${title}](${sourceUrl})` : `Source: ${title}`,
+    '',
+    '## Summary',
+    '',
+    summaryText,
     ''
   ];
 
-  if (highlightText) {
-    lines.push(`**${highlightText}**`, '');
-  }
-
-  lines.push('## Summary', '', summaryText, '');
   return lines.join('\n');
 }
 
