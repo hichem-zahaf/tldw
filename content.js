@@ -12,6 +12,8 @@ let watchLevel = 3;
 let queueLanguage = 'en';
 let obsidianEnabled = false;
 let obsidianVault = '';
+// Highlight handed off from the chip when the sheet's Obsidian button is pressed.
+let pendingFooterHighlight = null;
 let summaryQueue = [];
 let isSummaryQueueOpen = false;
 let contentSettingsLoaded = false;
@@ -738,6 +740,10 @@ function showHighlightChip(selected, clientX, clientY) {
   chip.dataset.queueId = selected.queueId;
   chip.style.display = 'inline-flex';
 
+  // Keep the chip last in the body so it wins the tie against the queue widget,
+  // which shares the same max z-index.
+  document.body.appendChild(chip);
+
   const left = Math.min(window.innerWidth - 170, Math.max(8, clientX + 8));
   const top = Math.min(window.innerHeight - 48, Math.max(8, clientY + 12));
   chip.style.left = `${left}px`;
@@ -778,7 +784,27 @@ function handleHighlightChipOutsideMouseDown(e) {
   if (!chip || chip.style.display === 'none') return;
   if (chip.contains(e.target)) return;
   if (e.target.closest?.('[data-tldw-obsidian-source]')) return;
+
+  // Pressing the sheet's Obsidian button clears the selection before its click
+  // handler runs, so hand the pending highlight over instead of dropping it.
+  const obsidianAction = e.target.closest?.('[data-tldw-queue-action="obsidian"]');
+  pendingFooterHighlight = obsidianAction
+    ? { text: chip.dataset.highlight || '', queueId: chip.dataset.queueId || '' }
+    : null;
+
   hideHighlightChip();
+}
+
+function takeQueueHighlight(queueId) {
+  const live = getObsidianSelection();
+  if (live && live.source === 'queue' && live.queueId === queueId) {
+    pendingFooterHighlight = null;
+    return live.text;
+  }
+
+  const pending = pendingFooterHighlight;
+  pendingFooterHighlight = null;
+  return pending && pending.queueId === queueId ? pending.text : '';
 }
 
 /**
@@ -1122,38 +1148,32 @@ async function handleSummaryQueueClick(e) {
 
   if (action === 'copy' && item.summary) {
     await navigator.clipboard.writeText(item.summary);
-    const originalText = actionEl.textContent;
-    actionEl.textContent = 'Copied';
-    setTimeout(() => {
-      actionEl.textContent = originalText;
-    }, 1600);
+    flashQueueActionGlyph(actionEl, '✓');
     return;
   }
 
   if (action === 'obsidian' && item.summary) {
-    const originalText = actionEl.textContent;
-    actionEl.textContent = 'Saving…';
+    const highlight = takeQueueHighlight(id);
+    const restore = setQueueActionGlyph(actionEl, '⋯');
     try {
       await saveSummaryToObsidian({
-        mode: 'bookmark',
+        mode: highlight ? 'highlight' : 'bookmark',
         videoId: item.videoId,
         videoTitle: item.videoTitle || item.title || item.videoId,
         videoUrl: item.videoUrl || `https://www.youtube.com/watch?v=${item.videoId}`,
-        summary: item.summary
+        summary: item.summary,
+        highlight
       });
-      actionEl.textContent = 'Saved';
-      setTimeout(() => {
-        actionEl.textContent = originalText;
-      }, 1600);
+      flashQueueActionGlyph(actionEl, '✓');
     } catch (err) {
-      actionEl.textContent = originalText;
+      restore();
       alert(err.message || String(err));
     }
     return;
   }
 
   if (action === 'retry') {
-    actionEl.textContent = 'Retrying...';
+    setQueueActionGlyph(actionEl, '⋯');
     const res = await chrome.runtime.sendMessage({
       action: 'RETRY_SUMMARY_QUEUE_ITEM',
       id
@@ -1178,6 +1198,21 @@ async function handleSummaryQueueClick(e) {
       updateFeedPillStates();
     }
   }
+}
+
+/** Swaps an icon button's glyph, returning a callback that puts the original back. */
+function setQueueActionGlyph(actionEl, glyph) {
+  const target = actionEl.querySelector('span') || actionEl;
+  const original = target.textContent;
+  target.textContent = glyph;
+  return () => {
+    target.textContent = original;
+  };
+}
+
+function flashQueueActionGlyph(actionEl, glyph, revertMs = 1400) {
+  const restore = setQueueActionGlyph(actionEl, glyph);
+  setTimeout(restore, revertMs);
 }
 
 // Escape unwinds one layer at a time (sheet, then panel). Arrow keys only move
@@ -1317,7 +1352,7 @@ function renderSummaryQueueWidget(focusedId = '') {
     <button class="tldw-summary-queue-toggle" type="button" data-tldw-queue-action="toggle" aria-expanded="${String(isSummaryQueueOpen)}">
       <span class="tldw-summary-queue-logo">⚡</span>
       <span class="tldw-summary-queue-title">TL;DW Queue</span>
-      <span class="tldw-summary-queue-count">${stats.unread > 0 ? stats.unread : stats.total}</span>
+      ${stats.unread > 0 ? `<span class="tldw-summary-queue-count">${stats.unread}</span>` : ''}
       <span class="tldw-summary-queue-subtitle">${escapeHTML(statusText)}</span>
     </button>
     ${isSummaryQueueOpen ? renderSummaryQueuePanel(stats) : ''}
@@ -1485,14 +1520,22 @@ function renderQueueSheet(item) {
     </header>
     <div class="tldw-q-sheet-body">${body}</div>
     <footer class="tldw-q-sheet-actions">
-      ${item.summary ? `<button type="button" data-tldw-queue-action="copy" data-queue-id="${id}">Copy</button>` : ''}
-      ${item.summary && isObsidianExportReady()
-        ? `<button type="button" class="tldw-q-sheet-obsidian" data-tldw-queue-action="obsidian" data-queue-id="${id}"
-                   title="Save this summary as a note in Obsidian">✦ Save to Obsidian</button>`
+      ${item.summary
+        ? `<button class="tldw-q-act" type="button" data-tldw-queue-action="copy" data-queue-id="${id}"
+                   title="Copy summary" aria-label="Copy summary"><span aria-hidden="true">⧉</span></button>`
         : ''}
-      ${item.status === 'error' ? `<button type="button" data-tldw-queue-action="retry" data-queue-id="${id}">Retry</button>` : ''}
-      <a href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">Open video</a>
-      <button class="tldw-q-sheet-remove" type="button" data-tldw-queue-action="remove" data-queue-id="${id}">Remove</button>
+      ${item.summary && isObsidianExportReady()
+        ? `<button class="tldw-q-act tldw-q-sheet-obsidian" type="button" data-tldw-queue-action="obsidian" data-queue-id="${id}"
+                   title="Save to Obsidian" aria-label="Save summary to Obsidian"><span aria-hidden="true">✦</span></button>`
+        : ''}
+      ${item.status === 'error'
+        ? `<button class="tldw-q-act" type="button" data-tldw-queue-action="retry" data-queue-id="${id}"
+                   title="Retry summary" aria-label="Retry summary"><span aria-hidden="true">↻</span></button>`
+        : ''}
+      <a class="tldw-q-act" href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer"
+         title="Open video on YouTube" aria-label="Open video on YouTube"><span aria-hidden="true">▶</span></a>
+      <button class="tldw-q-act tldw-q-sheet-remove" type="button" data-tldw-queue-action="remove" data-queue-id="${id}"
+              title="Remove from queue" aria-label="Remove from queue"><span aria-hidden="true">✕</span></button>
     </footer>
   `;
 }

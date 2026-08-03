@@ -263,7 +263,8 @@
 
 .tldw-highlight-chip {
   position: fixed;
-  z-index: 2147483646;
+  /* Must match the queue widget so a chip over the sheet is not painted behind it. */
+  z-index: 2147483647;
   display: none;
   align-items: center;
   justify-content: center;
@@ -1379,24 +1380,27 @@
   border-top: 1px solid var(--tldw-border);
 }
 
-.tldw-q-sheet-actions button,
-.tldw-q-sheet-actions a {
+.tldw-q-sheet-actions .tldw-q-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   border: 1px solid var(--tldw-border);
-  border-radius: 999px;
+  border-radius: 9px;
   background: var(--tldw-control-bg);
-  color: var(--tldw-text-primary);
+  color: var(--tldw-text-secondary);
   cursor: pointer;
   font-family: var(--tldw-font-family);
-  font-size: 12px;
-  font-weight: 700;
+  font-size: 14px;
   line-height: 1;
-  padding: 7px 11px;
   text-decoration: none;
 }
 
-.tldw-q-sheet-actions button:hover,
-.tldw-q-sheet-actions a:hover {
+.tldw-q-sheet-actions .tldw-q-act:hover {
   background: var(--tldw-control-hover-bg);
+  color: var(--tldw-text-primary);
 }
 
 .tldw-q-sheet-actions .tldw-q-sheet-obsidian {
@@ -1407,6 +1411,7 @@
 
 .tldw-q-sheet-actions .tldw-q-sheet-obsidian:hover {
   background: var(--tldw-accent);
+  color: #ffffff;
   filter: brightness(1.08);
 }
 
@@ -1418,6 +1423,7 @@
 
 .tldw-q-sheet-actions .tldw-q-sheet-remove:hover {
   background: rgba(255, 77, 77, 0.12);
+  color: #ff6767;
 }
 
 @media (prefers-reduced-motion: reduce) {
