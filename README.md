@@ -7,7 +7,7 @@
 ## ✨ Features
 
 - 🎯 **Embedded Summary Box**: Injects a clean, native-feeling summary card right above the description on any YouTube video (`youtube.com/watch?v=...`).
-- ⚡ **Feed Card Quick Summaries**: Adds a `⚡ Summarize` button directly under thumbnails across YouTube Home, Search, and Recommendations.
+- ⚡ **Batch Feed Summaries**: Adds a `⚡ Summarize` button under thumbnails across YouTube Home, Search, and Recommendations, then tracks queued/running/done summaries in a persistent top-right queue.
 - 🎚️ **5-Level Detail Slider**: Tailor summary depth on the fly:
   - **Level 1 (TL;DR)**: 1-sentence executive summary
   - **Level 2 (Short)**: 2–3 concise sentences
@@ -53,7 +53,7 @@ git clone https://github.com/yazinsai/tldw.git
 ## 💻 Usage
 
 - **Watch Page**: Open any YouTube video. The `⚡ TL;DW` summary container appears automatically. Click **✨ Summarize Video** or adjust format/level controls.
-- **Feed Cards**: On the YouTube Home page or search results, click `⚡ Summarize` below any video card to view an instant popover summary.
+- **Feed Cards**: On the YouTube Home page or search results, click `⚡ Summarize` below any video card to add it to the summary queue. Open the top-right `TL;DW Queue` tray to review running and completed summaries together.
 - **Extension Popup**: Click the toolbar extension icon on any active YouTube tab to quickly check cache or generate a summary with custom level/format settings.
 
 ---

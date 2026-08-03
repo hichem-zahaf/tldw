@@ -1,6 +1,12 @@
 import { generateSummary } from './summarizer.js';
 import { ACTIVE_SUMMARY_PROMPT_VARIANT } from './summary-prompts.js';
 import { getSummaryProgressMessage } from './summary-progress.js';
+import {
+  SUMMARY_QUEUE_KEY,
+  buildQueueItem,
+  getQueueStats,
+  mergeQueueItem
+} from './summary-queue.js';
 
 // Default configuration settings
 const DEFAULT_SETTINGS = {
@@ -13,6 +19,8 @@ const DEFAULT_SETTINGS = {
   autoSummarizeWatch: false,
   showFeedButtons: true
 };
+
+let summaryQueueWriteLock = Promise.resolve();
 
 function buildSummaryCacheKey({ videoId, language, level, format, provider }) {
   return `summary_${videoId}_${language}_L${level}_F${format}_${provider}_P${ACTIVE_SUMMARY_PROMPT_VARIANT}`;
@@ -62,6 +70,27 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true; // Keep channel open for async response
   }
 
+  if (request.action === 'QUEUE_SUMMARY') {
+    handleQueueSummary(request)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (request.action === 'GET_SUMMARY_QUEUE') {
+    handleGetSummaryQueue()
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (request.action === 'RETRY_SUMMARY_QUEUE_ITEM') {
+    handleRetrySummaryQueueItem(request.id)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
   if (request.action === 'GET_SETTINGS') {
     chrome.storage.local.get(DEFAULT_SETTINGS).then(settings => sendResponse({ success: true, settings }));
     return true;
@@ -77,6 +106,146 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 });
+
+async function getStoredSummaryQueue() {
+  const data = await chrome.storage.local.get(SUMMARY_QUEUE_KEY);
+  return Array.isArray(data[SUMMARY_QUEUE_KEY]) ? data[SUMMARY_QUEUE_KEY] : [];
+}
+
+async function saveSummaryQueue(queue) {
+  await chrome.storage.local.set({ [SUMMARY_QUEUE_KEY]: queue });
+  return queue;
+}
+
+async function updateSummaryQueueItem(patch) {
+  const nextWrite = summaryQueueWriteLock.then(async () => {
+    const queue = await getStoredSummaryQueue();
+    const nextQueue = mergeQueueItem(queue, {
+      ...patch,
+      updatedAt: patch.updatedAt || Date.now()
+    });
+    await saveSummaryQueue(nextQueue);
+    return nextQueue;
+  });
+
+  summaryQueueWriteLock = nextWrite.catch(() => {});
+  return await nextWrite;
+}
+
+async function handleGetSummaryQueue() {
+  const queue = await getStoredSummaryQueue();
+  return {
+    success: true,
+    queue,
+    stats: getQueueStats(queue)
+  };
+}
+
+async function handleQueueSummary({
+  videoId,
+  videoUrl,
+  videoTitle,
+  language,
+  summaryLevel,
+  summaryFormat,
+  forceRefresh = false
+}) {
+  if (!videoId) {
+    throw new Error('Missing YouTube video ID.');
+  }
+
+  const now = Date.now();
+  const queueItem = buildQueueItem({
+    id: `queue-${now}-${Math.random().toString(36).slice(2)}`,
+    videoId,
+    videoUrl: videoUrl || `https://www.youtube.com/watch?v=${videoId}`,
+    videoTitle,
+    language,
+    summaryLevel,
+    summaryFormat,
+    now
+  });
+
+  const queue = await updateSummaryQueueItem(queueItem);
+  processSummaryQueueItem(queueItem, forceRefresh).catch(err => {
+    console.warn('[TL;DW] Queued summary failed:', err);
+  });
+
+  return {
+    success: true,
+    item: queueItem,
+    queue,
+    stats: getQueueStats(queue)
+  };
+}
+
+async function handleRetrySummaryQueueItem(id) {
+  const queue = await getStoredSummaryQueue();
+  const existing = queue.find(item => item.id === id);
+
+  if (!existing) {
+    throw new Error('Queue item not found.');
+  }
+
+  await updateSummaryQueueItem({
+    ...existing,
+    status: 'queued',
+    progress: 'Queued',
+    error: '',
+    summary: existing.summary || '',
+    transcript: existing.transcript || ''
+  });
+
+  processSummaryQueueItem(existing, true).catch(err => {
+    console.warn('[TL;DW] Queued summary retry failed:', err);
+  });
+
+  return await handleGetSummaryQueue();
+}
+
+async function processSummaryQueueItem(item, forceRefresh = false) {
+  try {
+    await updateSummaryQueueItem({
+      id: item.id,
+      status: 'running',
+      progress: getSummaryProgressMessage('checkingCache')
+    });
+
+    const response = await handleGetSummary({
+      videoId: item.videoId,
+      videoUrl: item.videoUrl,
+      videoTitle: item.videoTitle,
+      language: item.language,
+      summaryLevel: item.summaryLevel,
+      summaryFormat: item.summaryFormat,
+      forceRefresh
+    }, async (step) => {
+      await updateSummaryQueueItem({
+        id: item.id,
+        status: 'running',
+        progress: getSummaryProgressMessage(step)
+      });
+    });
+
+    await updateSummaryQueueItem({
+      id: item.id,
+      status: 'done',
+      progress: response.cached ? 'Loaded from cache' : 'Summary ready',
+      summary: response.summary,
+      transcript: response.transcript,
+      cached: !!response.cached,
+      error: ''
+    });
+  } catch (err) {
+    await updateSummaryQueueItem({
+      id: item.id,
+      status: 'error',
+      progress: 'Failed',
+      error: err.message || String(err)
+    });
+    throw err;
+  }
+}
 
 /**
  * Fast Cache Checker - Returns immediately without making network calls

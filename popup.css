@@ -1,12 +1,34 @@
 :root {
   --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "SF Pro", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --color-scheme: dark;
   --bg-color: #121216;
   --card-bg: #1c1c22;
+  --panel-bg: rgba(0, 0, 0, 0.2);
+  --field-bg: rgba(255, 255, 255, 0.08);
+  --summary-bg: rgba(0, 0, 0, 0.25);
   --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #f5f5f7;
   --text-secondary: #9898a0;
+  --strong-color: #ffffff;
+  --slider-track: rgba(255, 255, 255, 0.2);
   --accent-color: #ff0055;
   --accent-gradient: linear-gradient(135deg, #ff0055 0%, #ff5000 100%);
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-scheme: light;
+    --bg-color: #f5f5f7;
+    --card-bg: #ffffff;
+    --panel-bg: rgba(0, 0, 0, 0.04);
+    --field-bg: rgba(0, 0, 0, 0.04);
+    --summary-bg: #f0f0f4;
+    --border-color: rgba(0, 0, 0, 0.1);
+    --text-primary: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --strong-color: #000000;
+    --slider-track: rgba(0, 0, 0, 0.18);
+  }
 }
 
 * {
@@ -19,6 +41,7 @@ body {
   width: 380px;
   background-color: var(--bg-color);
   color: var(--text-primary);
+  color-scheme: var(--color-scheme);
   font-family: var(--font-family);
   font-size: 14px;
   user-select: none;
@@ -96,7 +119,7 @@ body {
 .format-bar {
   display: flex;
   gap: 6px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--panel-bg);
   padding: 4px;
   border-radius: 10px;
   border: 1px solid var(--border-color);
@@ -132,7 +155,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--field-bg);
   padding: 8px 12px;
   border-radius: 10px;
   border: 1px solid var(--border-color);
@@ -161,7 +184,7 @@ body {
   width: 100%;
   height: 5px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--slider-track);
   outline: none;
 }
 
@@ -183,7 +206,7 @@ body {
 
 .select-input {
   flex: 1;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--field-bg);
   border: 1px solid var(--border-color);
   color: var(--text-primary);
   padding: 8px 10px;
@@ -214,19 +237,19 @@ body {
 }
 
 .summary-box {
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--summary-bg);
   border-radius: 10px;
   padding: 14px 16px;
   font-size: 15px;
   line-height: 1.65;
-  color: #f5f5f7;
+  color: var(--text-primary);
   max-height: 240px;
   overflow-y: auto;
   border-left: 3.5px solid var(--accent-color);
 }
 
 .summary-box strong {
-  color: #ffffff;
+  color: var(--strong-color);
 }
 
 .summary-box.rtl {

@@ -9,6 +9,13 @@ let activeSummaryRequestId = null;
 
 let watchFormat = 'paragraph';
 let watchLevel = 3;
+let queueLanguage = 'en';
+let summaryQueue = [];
+let isSummaryQueueOpen = false;
+let contentSettingsLoaded = false;
+const collapsedSummaryQueueItemIds = new Set();
+
+const SUMMARY_QUEUE_KEY = 'tldw_summary_queue';
 
 const LEVEL_LABELS = {
   1: 'Brief',
@@ -47,11 +54,24 @@ chrome.runtime.onMessage.addListener((request) => {
   }
 });
 
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes[SUMMARY_QUEUE_KEY]) return;
+  summaryQueue = Array.isArray(changes[SUMMARY_QUEUE_KEY].newValue)
+    ? changes[SUMMARY_QUEUE_KEY].newValue
+    : [];
+  renderSummaryQueueWidget();
+  updateFeedPillStates();
+});
+
 /**
  * Main Initialization
  */
 function initTLDW() {
   const url = window.location.href;
+
+  ensureContentSettingsLoaded();
+  injectSummaryQueueWidget();
+  loadSummaryQueue();
 
   if (url.includes('/watch?v=')) {
     const videoId = extractVideoId(url);
@@ -74,6 +94,31 @@ function initTLDW() {
   const pageContainer = document.querySelector('ytd-page-manager') || document.body;
   feedObserver.disconnect();
   feedObserver.observe(pageContainer, { childList: true, subtree: true });
+}
+
+async function ensureContentSettingsLoaded() {
+  if (contentSettingsLoaded) return;
+  contentSettingsLoaded = true;
+
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_SETTINGS' });
+    if (res?.success && res.settings) {
+      watchFormat = res.settings.summaryFormat || watchFormat;
+      watchLevel = res.settings.summaryLevel || watchLevel;
+      queueLanguage = res.settings.summaryLanguage || queueLanguage;
+    }
+  } catch (_) {}
+}
+
+async function loadSummaryQueue() {
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_SUMMARY_QUEUE' });
+    if (res?.success) {
+      summaryQueue = Array.isArray(res.queue) ? res.queue : [];
+      renderSummaryQueueWidget();
+      updateFeedPillStates();
+    }
+  } catch (_) {}
 }
 
 /**
@@ -454,95 +499,384 @@ function enhanceFeedCards() {
     'ytd-rich-item-renderer',
     'ytd-video-renderer',
     'ytd-compact-video-renderer',
-    'ytd-grid-video-renderer'
+    'ytd-grid-video-renderer',
+    'yt-lockup-view-model'
   ];
 
   const cards = document.querySelectorAll(cardSelectors.join(','));
 
   cards.forEach(card => {
-    if (card.querySelector('.tldw-feed-pill')) return;
+    if (card.querySelector('.tldw-feed-pill')) {
+      card.classList.add('tldw-feed-card-enhanced');
+      return;
+    }
 
-    const titleLink = card.querySelector('a#video-title-link, a#video-title, a#thumbnail');
+    const titleLink = getFeedCardTitleLink(card);
     if (!titleLink || !titleLink.href) return;
 
     const videoId = extractVideoId(titleLink.href);
     if (!videoId) return;
 
-    const metaContainer =
-      card.querySelector('#meta') ||
-      card.querySelector('.title-wrapper') ||
-      card.querySelector('#details') ||
-      card.querySelector('ytd-video-meta-block');
-
-    if (!metaContainer) return;
-
     const pill = document.createElement('button');
     pill.className = 'tldw-feed-pill';
+    pill.dataset.videoId = videoId;
     pill.innerHTML = '⚡ Summarize';
-    pill.title = 'Get AI summary using Clipscript transcript';
+    pill.title = 'Add this video to the TL;DW summary queue';
 
     pill.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      handleFeedCardSummary(card, videoId, titleLink.href, pill);
+      handleFeedCardSummary(card, videoId, titleLink.href, pill, getFeedCardVideoTitle(card, titleLink));
     });
 
-    metaContainer.appendChild(pill);
+    card.classList.add('tldw-feed-card-enhanced');
+    insertFeedPill(card, pill);
   });
+
+  updateFeedPillStates();
+}
+
+function getFeedCardTitleLink(card) {
+  return card.querySelector([
+    'a#video-title-link',
+    'a#video-title',
+    '.yt-lockup-metadata-view-model__title a[href*="/watch"]',
+    'yt-lockup-metadata-view-model a[href*="/watch"]',
+    'h3 a[href*="/watch"]',
+    'a[aria-label][href*="/watch"]',
+    'a[href*="/watch?v="]',
+    'a#thumbnail'
+  ].join(','));
+}
+
+function getFeedCardVideoTitle(card, titleLink) {
+  const titleEl = card.querySelector([
+    'a#video-title-link',
+    'a#video-title',
+    '.yt-lockup-metadata-view-model__title a[href*="/watch"]',
+    'yt-lockup-metadata-view-model a[href*="/watch"]',
+    'h3 a[href*="/watch"]',
+    'a[title][href*="/watch"]',
+    'a[aria-label][href*="/watch"]'
+  ].join(','));
+
+  return cleanFeedCardTitle(
+    titleEl?.textContent ||
+    titleEl?.getAttribute('title') ||
+    titleEl?.getAttribute('aria-label') ||
+    titleLink?.textContent ||
+    titleLink?.getAttribute('title') ||
+    titleLink?.getAttribute('aria-label') ||
+    ''
+  );
+}
+
+function cleanFeedCardTitle(rawTitle) {
+  const title = String(rawTitle || '').replace(/\s+/g, ' ').trim();
+  if (!title) return '';
+
+  return title
+    .replace(/\s+by\s+.+$/i, '')
+    .replace(/\s+\d+(?:,\d+)?\s+views?.*$/i, '')
+    .trim();
+}
+
+function insertFeedPill(card, pill) {
+  const thumbnail =
+    card.querySelector('yt-thumbnail-view-model') ||
+    card.querySelector('.yt-thumbnail-view-model') ||
+    card.querySelector('ytd-thumbnail') ||
+    card.querySelector('a#thumbnail')?.parentElement ||
+    card.querySelector('a[href*="/watch"] img')?.parentElement ||
+    card.querySelector('#thumbnail');
+
+  if (thumbnail) {
+    pill.classList.add('tldw-feed-pill-overlay');
+    thumbnail.style.position = thumbnail.style.position || 'relative';
+    thumbnail.appendChild(pill);
+    return;
+  }
+
+  const details =
+    card.querySelector('#details') ||
+    card.querySelector('.details') ||
+    card.querySelector('ytd-rich-grid-media #meta');
+
+  if (details) {
+    details.appendChild(pill);
+    return;
+  }
+
+  const metadataBlock =
+    card.querySelector('ytd-video-meta-block') ||
+    card.querySelector('#metadata-line') ||
+    card.querySelector('.title-wrapper');
+
+  if (metadataBlock?.parentElement) {
+    metadataBlock.parentElement.insertBefore(pill, metadataBlock.nextSibling);
+    return;
+  }
+
+  card.appendChild(pill);
 }
 
 /**
  * Handle feed card summary request
  */
-async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn) {
-  let summaryBox = card.querySelector('.tldw-feed-card-summary');
-  
-  if (summaryBox) {
-    summaryBox.remove();
-    pillBtn.innerHTML = '⚡ Summarize';
+async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitle = '') {
+  const existing = findQueueItemByVideoId(videoId);
+  if (existing) {
+    isSummaryQueueOpen = true;
+    renderSummaryQueueWidget(existing.id);
     return;
   }
 
-  pillBtn.innerHTML = '⏳ Loading...';
-
-  const titleEl = card.querySelector('#video-title, #video-title-link');
-  const videoTitle = titleEl ? titleEl.textContent.trim() : '';
-
-  summaryBox = document.createElement('div');
-  summaryBox.className = 'tldw-feed-card-summary tldw-ltr';
-  summaryBox.innerHTML = 'Retrieving transcript & summarizing...';
-
-  const metaContainer = pillBtn.parentElement;
-  metaContainer.appendChild(summaryBox);
+  pillBtn.disabled = true;
+  pillBtn.innerHTML = 'Queued...';
 
   try {
     const response = await chrome.runtime.sendMessage({
-      action: 'GET_SUMMARY',
+      action: 'QUEUE_SUMMARY',
       videoId,
       videoUrl,
       videoTitle,
-      language: 'en',
+      language: queueLanguage,
       summaryLevel: watchLevel,
       summaryFormat: watchFormat
     });
 
     if (!response.success) {
-      throw new Error(response.error || 'Failed to summarize video.');
+      throw new Error(response.error || 'Failed to queue video.');
     }
 
-    const isArabic = isArabicText(response.summary);
-    summaryBox.className = `tldw-feed-card-summary ${isArabic ? 'tldw-rtl' : 'tldw-ltr'}`;
-    summaryBox.innerHTML = `
-      <div style="font-weight: 700; font-size: 11px; margin-bottom: 6px; color: #ff3366;">⚡ TL;DW Summary:</div>
-      <div>${parseMarkdown(response.summary)}</div>
-    `;
-
-    pillBtn.innerHTML = '❌ Hide Summary';
+    summaryQueue = Array.isArray(response.queue) ? response.queue : summaryQueue;
+    isSummaryQueueOpen = true;
+    renderSummaryQueueWidget(response.item?.id);
+    updateFeedPillStates();
 
   } catch (err) {
-    summaryBox.innerHTML = `⚠️ <span style="color:#ff4d4d;">${escapeHTML(err.message || String(err))}</span>`;
-    pillBtn.innerHTML = '⚡ Summarize';
+    pillBtn.innerHTML = 'Retry queue';
+    pillBtn.title = err.message || String(err);
+  } finally {
+    pillBtn.disabled = false;
   }
+}
+
+function findQueueItemByVideoId(videoId) {
+  return summaryQueue.find(item => item.videoId === videoId);
+}
+
+function updateFeedPillStates() {
+  document.querySelectorAll('.tldw-feed-pill').forEach(pill => {
+    const item = findQueueItemByVideoId(pill.dataset.videoId);
+
+    pill.disabled = false;
+    pill.classList.remove('tldw-feed-pill-running', 'tldw-feed-pill-done', 'tldw-feed-pill-error');
+
+    if (!item) {
+      pill.innerHTML = '⚡ Summarize';
+      pill.title = 'Add this video to the TL;DW summary queue';
+      return;
+    }
+
+    if (item.status === 'done') {
+      pill.innerHTML = '✓ In Queue';
+      pill.title = 'Summary ready. Click to open the TL;DW queue.';
+      pill.classList.add('tldw-feed-pill-done');
+      return;
+    }
+
+    if (item.status === 'error') {
+      pill.innerHTML = '⚠ Queue Error';
+      pill.title = item.error || 'Summary failed. Click to open the TL;DW queue.';
+      pill.classList.add('tldw-feed-pill-error');
+      return;
+    }
+
+    pill.innerHTML = item.status === 'running' ? '⏳ Summarizing' : 'Queued';
+    pill.title = item.progress || 'Summary queued.';
+    pill.classList.add('tldw-feed-pill-running');
+  });
+}
+
+function injectSummaryQueueWidget() {
+  if (document.getElementById('tldw-summary-queue-widget')) return true;
+  if (!document.body) return false;
+
+  const widget = document.createElement('div');
+  widget.id = 'tldw-summary-queue-widget';
+  widget.className = 'tldw-summary-queue-widget';
+  widget.style.display = 'none';
+  document.body.appendChild(widget);
+
+  widget.addEventListener('click', async (e) => {
+    const actionEl = e.target.closest('[data-tldw-queue-action]');
+    if (!actionEl) return;
+
+    const action = actionEl.dataset.tldwQueueAction;
+    const id = actionEl.dataset.queueId;
+
+    if (action === 'toggle') {
+      isSummaryQueueOpen = !isSummaryQueueOpen;
+      renderSummaryQueueWidget();
+      return;
+    }
+
+    if (action === 'close') {
+      isSummaryQueueOpen = false;
+      renderSummaryQueueWidget();
+      return;
+    }
+
+    const item = summaryQueue.find(queueItem => queueItem.id === id);
+    if (!item) return;
+
+    if (action === 'toggle-summary' && e.target.closest('a, button')) {
+      return;
+    }
+
+    if (action === 'copy' && item.summary) {
+      await navigator.clipboard.writeText(item.summary);
+      const originalText = actionEl.textContent;
+      actionEl.textContent = 'Copied';
+      setTimeout(() => {
+        actionEl.textContent = originalText;
+      }, 1600);
+      return;
+    }
+
+    if (action === 'toggle-summary') {
+      if (collapsedSummaryQueueItemIds.has(id)) {
+        collapsedSummaryQueueItemIds.delete(id);
+      } else {
+        collapsedSummaryQueueItemIds.add(id);
+      }
+      renderSummaryQueueWidget(id);
+      return;
+    }
+
+    if (action === 'retry') {
+      actionEl.textContent = 'Retrying...';
+      const res = await chrome.runtime.sendMessage({
+        action: 'RETRY_SUMMARY_QUEUE_ITEM',
+        id
+      });
+      if (res?.success) {
+        summaryQueue = Array.isArray(res.queue) ? res.queue : summaryQueue;
+        renderSummaryQueueWidget(id);
+        updateFeedPillStates();
+      }
+    }
+  });
+
+  renderSummaryQueueWidget();
+  return true;
+}
+
+function renderSummaryQueueWidget(focusedId = '') {
+  const widget = document.getElementById('tldw-summary-queue-widget');
+  if (!widget) return;
+
+  const stats = getSummaryQueueStats();
+  const shouldShow = summaryQueue.length > 0 || isSummaryQueueOpen;
+  widget.style.display = shouldShow ? 'block' : 'none';
+  widget.classList.toggle('tldw-summary-queue-open', isSummaryQueueOpen);
+
+  const statusText = stats.pending > 0
+    ? `${stats.pending} running`
+    : stats.error > 0
+      ? `${stats.error} failed`
+      : `${stats.done} done`;
+
+  widget.innerHTML = `
+    <button class="tldw-summary-queue-toggle" type="button" data-tldw-queue-action="toggle" aria-expanded="${String(isSummaryQueueOpen)}">
+      <span class="tldw-summary-queue-logo">⚡</span>
+      <span class="tldw-summary-queue-title">TL;DW Queue</span>
+      <span class="tldw-summary-queue-count">${stats.total}</span>
+      <span class="tldw-summary-queue-subtitle">${escapeHTML(statusText)}</span>
+    </button>
+    ${isSummaryQueueOpen ? renderSummaryQueuePanel(focusedId) : ''}
+  `;
+}
+
+function renderSummaryQueuePanel(focusedId) {
+  const itemsHtml = summaryQueue.length
+    ? summaryQueue.map(item => renderSummaryQueueItem(item, focusedId)).join('')
+    : '<div class="tldw-summary-queue-empty">No summaries queued yet.</div>';
+
+  return `
+    <div class="tldw-summary-queue-panel" role="dialog" aria-label="TL;DW summary queue">
+      <div class="tldw-summary-queue-panel-header">
+        <div>
+          <div class="tldw-summary-queue-panel-title">Summary Queue</div>
+          <div class="tldw-summary-queue-panel-meta">Recent summaries stay here while you browse.</div>
+        </div>
+        <button class="tldw-summary-queue-close" type="button" data-tldw-queue-action="close" aria-label="Close queue">×</button>
+      </div>
+      <div class="tldw-summary-queue-items">
+        ${itemsHtml}
+      </div>
+    </div>
+  `;
+}
+
+function renderSummaryQueueItem(item, focusedId) {
+  const isDone = item.status === 'done';
+  const isError = item.status === 'error';
+  const isFocused = focusedId && item.id === focusedId;
+  const isCollapsed = collapsedSummaryQueueItemIds.has(item.id);
+  const statusLabel = getSummaryQueueStatusLabel(item);
+  const summaryHtml = isDone && item.summary && !isCollapsed
+    ? `<div class="tldw-summary-queue-result ${isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr'}">${parseMarkdown(item.summary)}</div>`
+    : '';
+  const collapsedHtml = isDone && item.summary && isCollapsed
+    ? '<div class="tldw-summary-queue-collapsed">Summary collapsed.</div>'
+    : '';
+  const errorHtml = isError && item.error
+    ? `<div class="tldw-summary-queue-error">${escapeHTML(item.error)}</div>`
+    : '';
+
+  return `
+    <article class="tldw-summary-queue-item ${isFocused ? 'tldw-summary-queue-item-focused' : ''}" data-status="${escapeHTML(item.status || 'queued')}">
+      <div class="tldw-summary-queue-item-top" ${isDone && item.summary ? `data-tldw-queue-action="toggle-summary" data-queue-id="${escapeHTML(item.id)}"` : ''}>
+        <a class="tldw-summary-queue-video-title" href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">
+          ${escapeHTML(item.videoTitle || 'YouTube video')}
+        </a>
+        <span class="tldw-summary-queue-status">${escapeHTML(statusLabel)}</span>
+      </div>
+      <div class="tldw-summary-queue-progress">${escapeHTML(item.progress || '')}</div>
+      ${summaryHtml}
+      ${collapsedHtml}
+      ${errorHtml}
+      <div class="tldw-summary-queue-actions">
+        ${isDone ? `<button type="button" data-tldw-queue-action="copy" data-queue-id="${escapeHTML(item.id)}">Copy</button>` : ''}
+        ${isError ? `<button type="button" data-tldw-queue-action="retry" data-queue-id="${escapeHTML(item.id)}">Retry</button>` : ''}
+        <a href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">Open video</a>
+      </div>
+    </article>
+  `;
+}
+
+function getSummaryQueueStats() {
+  return summaryQueue.reduce((stats, item) => {
+    stats.total += 1;
+    if (item.status === 'done') stats.done += 1;
+    else if (item.status === 'error') stats.error += 1;
+    else stats.pending += 1;
+    return stats;
+  }, {
+    total: 0,
+    pending: 0,
+    done: 0,
+    error: 0
+  });
+}
+
+function getSummaryQueueStatusLabel(item) {
+  if (item.status === 'done') return item.cached ? 'Cached' : 'Done';
+  if (item.status === 'error') return 'Failed';
+  if (item.status === 'running') return 'Running';
+  return 'Queued';
 }
 
 /**

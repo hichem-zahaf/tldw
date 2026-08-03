@@ -1,13 +1,41 @@
 :root {
   --font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "SF Pro", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --color-scheme: dark;
   --bg-color: #0f0f12;
   --card-bg: #18181d;
+  --field-bg: rgba(255, 255, 255, 0.06);
+  --field-hover-bg: rgba(255, 255, 255, 0.12);
+  --secondary-btn-bg: rgba(255, 255, 255, 0.1);
+  --secondary-btn-hover-bg: rgba(255, 255, 255, 0.2);
+  --switch-bg: rgba(255, 255, 255, 0.2);
+  --slider-track: rgba(255, 255, 255, 0.2);
   --border-color: rgba(255, 255, 255, 0.12);
   --text-primary: #f1f1f5;
   --text-secondary: #92929e;
+  --heading-color: #ffffff;
+  --active-text: #ffffff;
   --accent-gradient: linear-gradient(135deg, #ff0055 0%, #ff5000 100%);
   --accent-color: #ff0055;
   --radius: 12px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-scheme: light;
+    --bg-color: #f5f5f7;
+    --card-bg: #ffffff;
+    --field-bg: rgba(0, 0, 0, 0.04);
+    --field-hover-bg: rgba(0, 0, 0, 0.08);
+    --secondary-btn-bg: rgba(0, 0, 0, 0.04);
+    --secondary-btn-hover-bg: rgba(0, 0, 0, 0.08);
+    --switch-bg: rgba(0, 0, 0, 0.18);
+    --slider-track: rgba(0, 0, 0, 0.18);
+    --border-color: rgba(0, 0, 0, 0.1);
+    --text-primary: #1d1d1f;
+    --text-secondary: #6e6e73;
+    --heading-color: #000000;
+    --active-text: #1d1d1f;
+  }
 }
 
 * {
@@ -19,6 +47,7 @@
 body {
   background-color: var(--bg-color);
   color: var(--text-primary);
+  color-scheme: var(--color-scheme);
   font-family: var(--font-family);
   -webkit-font-smoothing: antialiased;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -76,7 +105,7 @@ body {
 .section-card h2 {
   font-size: 16px;
   font-weight: 700;
-  color: #ffffff;
+  color: var(--heading-color);
 }
 
 .section-desc {
@@ -100,7 +129,7 @@ label {
 input[type="text"],
 input[type="password"],
 .select-input {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--field-bg);
   border: 1px solid var(--border-color);
   border-radius: 8px;
   padding: 10px 14px;
@@ -143,7 +172,7 @@ input[type="password"]:focus,
 
 .format-btn {
   flex: 1;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--field-bg);
   border: 1px solid var(--border-color);
   border-radius: 10px;
   padding: 10px;
@@ -160,13 +189,13 @@ input[type="password"]:focus,
 }
 
 .format-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: var(--field-hover-bg);
 }
 
 .format-btn.active {
   background: rgba(255, 0, 85, 0.18);
   border-color: #ff0055;
-  color: #ffffff;
+  color: var(--active-text);
   box-shadow: 0 0 12px rgba(255, 0, 85, 0.25);
 }
 
@@ -203,7 +232,7 @@ input[type="password"]:focus,
   width: 100%;
   height: 6px;
   border-radius: 3px;
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--slider-track);
   outline: none;
 }
 
@@ -263,7 +292,7 @@ input[type="password"]:focus,
   position: absolute;
   cursor: pointer;
   top: 0; left: 0; right: 0; bottom: 0;
-  background-color: rgba(255, 255, 255, 0.2);
+  background-color: var(--switch-bg);
   transition: .2s;
   border-radius: 22px;
 }
@@ -309,14 +338,14 @@ input:checked + .slider:before {
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--secondary-btn-bg);
   color: var(--text-primary);
   border: 1px solid var(--border-color);
   flex-shrink: 0;
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--secondary-btn-hover-bg);
 }
 
 .actions-footer {
