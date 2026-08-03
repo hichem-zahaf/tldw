@@ -27,6 +27,7 @@ Highlights:
 - English, Arabic, and automatic language modes
 - Choice of five AI providers
 - Local summary caching
+- Optional Obsidian export for bookmarks and highlights
 - No advertising or analytics SDKs
 
 An account and API key from Clipscript and the selected AI provider are required. Provider usage charges may apply.
@@ -37,7 +38,7 @@ TL;DW's single purpose is to transcribe and summarize YouTube videos in the brow
 
 ## Permission justifications
 
-**storage:** Stores user-entered API keys, preferences, summary queues, transcripts, and cached summaries locally so settings persist and repeated requests are avoided.
+**storage:** Stores user-entered API keys, preferences (including optional Obsidian vault settings), summary queues, transcripts, and cached summaries locally so settings persist and repeated requests are avoided.
 
 **activeTab:** Lets the popup identify the active YouTube video after the user invokes the extension, so it can check or generate that video's summary.
 

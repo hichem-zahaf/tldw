@@ -236,6 +236,25 @@ body {
   opacity: 0.92;
 }
 
+.btn-secondary {
+  background: var(--field-bg);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
+.btn-secondary:hover {
+  opacity: 0.92;
+}
+
+.obsidian-btn {
+  width: 100%;
+  border-color: rgba(255, 0, 85, 0.42);
+}
+
+.obsidian-btn:hover {
+  border-color: var(--accent-color);
+}
+
 .summary-box {
   background: var(--summary-bg);
   border-radius: 10px;

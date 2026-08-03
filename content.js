@@ -10,9 +10,12 @@ let activeSummaryRequestId = null;
 let watchFormat = 'paragraph';
 let watchLevel = 3;
 let queueLanguage = 'en';
+let obsidianEnabled = false;
+let obsidianVault = '';
 let summaryQueue = [];
 let isSummaryQueueOpen = false;
 let contentSettingsLoaded = false;
+let contentSettingsPromise = null;
 let activeQueueItemId = '';
 let isQueueSheetOpen = false;
 let queueFilter = 'all';
@@ -69,6 +72,11 @@ window.addEventListener('popstate', () => {
 
 window.addEventListener('resize', debounce(repositionWatchSummaryBox, 250));
 
+// Highlight capture is document-wide so it works in the watch summary and in
+// the queue sheet, both of which are re-rendered independently.
+document.addEventListener('mouseup', handleSummarySelectionMouseUp);
+document.addEventListener('mousedown', handleHighlightChipOutsideMouseDown, true);
+
 chrome.runtime.onMessage.addListener((request) => {
   if (
     request.action === 'SUMMARY_PROGRESS' &&
@@ -80,12 +88,29 @@ chrome.runtime.onMessage.addListener((request) => {
 });
 
 chrome.storage.onChanged.addListener((changes, areaName) => {
-  if (areaName !== 'local' || !changes[SUMMARY_QUEUE_KEY]) return;
-  summaryQueue = Array.isArray(changes[SUMMARY_QUEUE_KEY].newValue)
-    ? changes[SUMMARY_QUEUE_KEY].newValue
-    : [];
-  renderSummaryQueueWidget();
-  updateFeedPillStates();
+  if (areaName !== 'local') return;
+
+  if (changes[SUMMARY_QUEUE_KEY]) {
+    summaryQueue = Array.isArray(changes[SUMMARY_QUEUE_KEY].newValue)
+      ? changes[SUMMARY_QUEUE_KEY].newValue
+      : [];
+    renderSummaryQueueWidget();
+    updateFeedPillStates();
+  }
+
+  let obsidianSettingsChanged = false;
+  if (Object.prototype.hasOwnProperty.call(changes, 'obsidianEnabled')) {
+    obsidianEnabled = !!changes.obsidianEnabled.newValue;
+    obsidianSettingsChanged = true;
+  }
+  if (Object.prototype.hasOwnProperty.call(changes, 'obsidianVault')) {
+    obsidianVault = String(changes.obsidianVault.newValue || '').trim();
+    obsidianSettingsChanged = true;
+  }
+  if (obsidianSettingsChanged) {
+    updateObsidianUiVisibility();
+    renderSummaryQueueWidget();
+  }
 });
 
 /**
@@ -122,17 +147,28 @@ function initTLDW() {
 }
 
 async function ensureContentSettingsLoaded() {
-  if (contentSettingsLoaded) return;
-  contentSettingsLoaded = true;
+  if (contentSettingsPromise) return contentSettingsPromise;
 
-  try {
-    const res = await chrome.runtime.sendMessage({ action: 'GET_SETTINGS' });
-    if (res?.success && res.settings) {
-      watchFormat = res.settings.summaryFormat || watchFormat;
-      watchLevel = res.settings.summaryLevel || watchLevel;
-      queueLanguage = res.settings.summaryLanguage || queueLanguage;
-    }
-  } catch (_) {}
+  contentSettingsLoaded = true;
+  contentSettingsPromise = (async () => {
+    try {
+      const res = await chrome.runtime.sendMessage({ action: 'GET_SETTINGS' });
+      if (res?.success && res.settings) {
+        watchFormat = res.settings.summaryFormat || watchFormat;
+        watchLevel = res.settings.summaryLevel || watchLevel;
+        queueLanguage = res.settings.summaryLanguage || queueLanguage;
+        obsidianEnabled = !!res.settings.obsidianEnabled;
+        obsidianVault = String(res.settings.obsidianVault || '').trim();
+        updateObsidianUiVisibility();
+      }
+    } catch (_) {}
+  })();
+
+  return contentSettingsPromise;
+}
+
+function isObsidianExportReady() {
+  return obsidianEnabled && !!obsidianVault;
 }
 
 async function loadSummaryQueue() {
@@ -195,6 +231,10 @@ function injectWatchSummaryBox() {
         <button id="tldw-copy-btn" class="tldw-icon-btn" style="display:none;" title="Copy summary" aria-label="Copy summary" data-sidebar-label="Copy">
           <span aria-hidden="true">⧉</span>
         </button>
+        <button id="tldw-obsidian-btn" class="tldw-btn tldw-btn-secondary tldw-obsidian-btn" style="display:none;" title="Save this summary as a note in Obsidian" aria-label="Save summary to Obsidian" data-sidebar-label="Obsidian">
+          <span aria-hidden="true">✦</span>
+          <span class="tldw-obsidian-btn-label">Save to Obsidian</span>
+        </button>
         <button id="tldw-refresh-btn" class="tldw-icon-btn" style="display:none;" title="Refresh summary" aria-label="Refresh summary" data-sidebar-label="Refresh">
           <span aria-hidden="true">↻</span>
         </button>
@@ -243,6 +283,7 @@ function injectWatchSummaryBox() {
   document.getElementById('tldw-summarize-btn').addEventListener('click', () => fetchAndRenderWatchSummary(false));
   document.getElementById('tldw-refresh-btn').addEventListener('click', () => fetchAndRenderWatchSummary(true));
   document.getElementById('tldw-copy-btn').addEventListener('click', copySummaryToClipboard);
+  document.getElementById('tldw-obsidian-btn').addEventListener('click', () => saveWatchSummaryToObsidian('bookmark'));
   document.getElementById('tldw-transcript-btn').addEventListener('click', toggleTranscriptBox);
   document.getElementById('tldw-lang-select').addEventListener('change', () => fetchAndRenderWatchSummary(false));
   document.getElementById('tldw-level-select').addEventListener('change', (e) => {
@@ -384,6 +425,7 @@ function setWatchSummaryDirection(isRtl) {
  * Remove watch page summary box
  */
 function removeWatchSummaryBox() {
+  hideHighlightChip();
   const box = document.getElementById('tldw-summary-container');
   if (box) box.remove();
 }
@@ -440,7 +482,11 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
 
     // Render Formatted Markdown Summary
     bodyEl.innerHTML = `
-      <div class="tldw-summary-text">${parseMarkdown(response.summary)}</div>
+      <div class="tldw-summary-text" data-tldw-obsidian-source="watch">${parseMarkdown(response.summary)}</div>
+      <div class="tldw-obsidian-hint" id="tldw-obsidian-hint" style="display:none;">
+        <span aria-hidden="true">✦</span>
+        <span>Select any text above to save it as a highlight in Obsidian.</span>
+      </div>
     `;
 
     // Populate Transcript box
@@ -452,6 +498,7 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
     // Show Action buttons
     document.getElementById('tldw-copy-btn').style.display = 'inline-flex';
     document.getElementById('tldw-refresh-btn').style.display = 'inline-flex';
+    updateObsidianUiVisibility();
     if (response.transcript) {
       document.getElementById('tldw-transcript-btn').style.display = 'inline-flex';
     }
@@ -514,6 +561,224 @@ function copySummaryToClipboard() {
       }, 2000);
     }
   });
+}
+
+function updateObsidianUiVisibility() {
+  const show = isObsidianExportReady() && !!currentSummaryData?.summary;
+
+  const btn = document.getElementById('tldw-obsidian-btn');
+  if (btn) btn.style.display = show ? 'inline-flex' : 'none';
+
+  const hint = document.getElementById('tldw-obsidian-hint');
+  if (hint) hint.style.display = show ? 'flex' : 'none';
+
+  if (!show) hideHighlightChip();
+}
+
+async function saveWatchSummaryToObsidian(mode, highlight = '') {
+  if (!currentSummaryData?.summary) return;
+
+  const btn = document.getElementById('tldw-obsidian-btn');
+  try {
+    await saveSummaryToObsidian({
+      mode,
+      videoId: currentVideoId,
+      videoTitle: getWatchVideoTitle(),
+      videoUrl: window.location.href,
+      summary: currentSummaryData.summary,
+      highlight
+    });
+    const label = btn?.querySelector('.tldw-obsidian-btn-label');
+    if (label && mode === 'bookmark') {
+      const origLabel = label.textContent;
+      label.textContent = 'Saved to Obsidian';
+      setTimeout(() => {
+        label.textContent = origLabel;
+      }, 2000);
+    }
+    hideHighlightChip();
+  } catch (err) {
+    alert(err.message || String(err));
+  }
+}
+
+async function saveSummaryToObsidian({
+  mode,
+  videoId,
+  videoTitle,
+  videoUrl,
+  summary,
+  highlight = ''
+}) {
+  if (!isObsidianExportReady()) {
+    throw new Error('Enable Obsidian export and set your vault name in TL;DW settings.');
+  }
+
+  const response = await chrome.runtime.sendMessage({
+    action: 'SAVE_TO_OBSIDIAN',
+    mode,
+    videoId,
+    videoTitle,
+    videoUrl,
+    summary,
+    highlight
+  });
+
+  if (!response?.success || !response.uri) {
+    throw new Error(response?.error || 'Failed to save to Obsidian.');
+  }
+
+  if (response.useClipboard && response.markdown) {
+    await navigator.clipboard.writeText(response.markdown);
+  }
+
+  launchObsidianUri(response.uri);
+}
+
+function launchObsidianUri(uri) {
+  const target = String(uri || '').trim();
+  if (!target.startsWith('obsidian://')) {
+    throw new Error('Invalid Obsidian URI.');
+  }
+
+  const anchor = document.createElement('a');
+  anchor.href = target;
+  anchor.rel = 'noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  // Fallback if the gesture was already consumed by an await.
+  chrome.runtime.sendMessage({ action: 'OPEN_OBSIDIAN_URI', uri: target }).catch(() => {});
+}
+
+const HIGHLIGHT_CHIP_LABEL = 'Save highlight';
+
+/**
+ * Selection can happen in the watch summary or inside a queue sheet, so the
+ * chip resolves its video context from whichever summary block was selected.
+ */
+function getObsidianSelection() {
+  const selection = window.getSelection();
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
+
+  const range = selection.getRangeAt(0);
+  const common = range.commonAncestorContainer;
+  const node = common.nodeType === Node.TEXT_NODE ? common.parentNode : common;
+  const sourceEl = node?.closest?.('[data-tldw-obsidian-source]');
+  if (!sourceEl) return null;
+
+  const text = String(selection.toString() || '').replace(/\s+/g, ' ').trim();
+  if (!text) return null;
+
+  return {
+    text,
+    source: sourceEl.dataset.tldwObsidianSource,
+    queueId: sourceEl.dataset.queueId || ''
+  };
+}
+
+function resolveObsidianContext(source, queueId) {
+  if (source === 'queue') {
+    const item = summaryQueue.find(queueItem => queueItem.id === queueId);
+    if (!item?.summary) return null;
+    return {
+      videoId: item.videoId,
+      videoTitle: item.videoTitle || item.videoId,
+      videoUrl: item.videoUrl || `https://www.youtube.com/watch?v=${item.videoId}`,
+      summary: item.summary
+    };
+  }
+
+  if (!currentSummaryData?.summary) return null;
+  return {
+    videoId: currentVideoId,
+    videoTitle: getWatchVideoTitle(),
+    videoUrl: window.location.href,
+    summary: currentSummaryData.summary
+  };
+}
+
+function handleSummarySelectionMouseUp(e) {
+  if (!isObsidianExportReady()) {
+    hideHighlightChip();
+    return;
+  }
+
+  // Let the browser finish updating the selection before we read it.
+  setTimeout(() => {
+    const selected = getObsidianSelection();
+    if (!selected || !resolveObsidianContext(selected.source, selected.queueId)) {
+      hideHighlightChip();
+      return;
+    }
+    showHighlightChip(selected, e.clientX, e.clientY);
+  }, 0);
+}
+
+function showHighlightChip(selected, clientX, clientY) {
+  let chip = document.getElementById('tldw-highlight-chip');
+  if (!chip) {
+    chip = document.createElement('button');
+    chip.id = 'tldw-highlight-chip';
+    chip.type = 'button';
+    chip.className = 'tldw-highlight-chip';
+    chip.innerHTML = `<span aria-hidden="true">✦</span><span class="tldw-highlight-chip-label">${HIGHLIGHT_CHIP_LABEL}</span>`;
+    chip.addEventListener('mousedown', (event) => {
+      // Keep the selection alive until click handlers run.
+      event.preventDefault();
+    });
+    chip.addEventListener('click', () => saveHighlightFromChip(chip));
+    document.body.appendChild(chip);
+  }
+
+  chip.dataset.highlight = selected.text;
+  chip.dataset.source = selected.source;
+  chip.dataset.queueId = selected.queueId;
+  chip.style.display = 'inline-flex';
+
+  const left = Math.min(window.innerWidth - 170, Math.max(8, clientX + 8));
+  const top = Math.min(window.innerHeight - 48, Math.max(8, clientY + 12));
+  chip.style.left = `${left}px`;
+  chip.style.top = `${top}px`;
+}
+
+async function saveHighlightFromChip(chip) {
+  const highlight = chip.dataset.highlight;
+  const context = resolveObsidianContext(chip.dataset.source, chip.dataset.queueId);
+  if (!highlight || !context) return;
+
+  const label = chip.querySelector('.tldw-highlight-chip-label');
+  chip.disabled = true;
+  if (label) label.textContent = 'Saving…';
+
+  try {
+    await saveSummaryToObsidian({ mode: 'highlight', ...context, highlight });
+    if (label) label.textContent = 'Saved';
+    setTimeout(hideHighlightChip, 900);
+  } catch (err) {
+    if (label) label.textContent = HIGHLIGHT_CHIP_LABEL;
+    alert(err.message || String(err));
+  } finally {
+    chip.disabled = false;
+    setTimeout(() => {
+      if (label) label.textContent = HIGHLIGHT_CHIP_LABEL;
+    }, 1200);
+  }
+}
+
+function hideHighlightChip() {
+  const chip = document.getElementById('tldw-highlight-chip');
+  if (chip) chip.style.display = 'none';
+}
+
+function handleHighlightChipOutsideMouseDown(e) {
+  const chip = document.getElementById('tldw-highlight-chip');
+  if (!chip || chip.style.display === 'none') return;
+  if (chip.contains(e.target)) return;
+  if (e.target.closest?.('[data-tldw-obsidian-source]')) return;
+  hideHighlightChip();
 }
 
 /**
@@ -865,6 +1130,28 @@ async function handleSummaryQueueClick(e) {
     return;
   }
 
+  if (action === 'obsidian' && item.summary) {
+    const originalText = actionEl.textContent;
+    actionEl.textContent = 'Saving…';
+    try {
+      await saveSummaryToObsidian({
+        mode: 'bookmark',
+        videoId: item.videoId,
+        videoTitle: item.videoTitle || item.title || item.videoId,
+        videoUrl: item.videoUrl || `https://www.youtube.com/watch?v=${item.videoId}`,
+        summary: item.summary
+      });
+      actionEl.textContent = 'Saved';
+      setTimeout(() => {
+        actionEl.textContent = originalText;
+      }, 1600);
+    } catch (err) {
+      actionEl.textContent = originalText;
+      alert(err.message || String(err));
+    }
+    return;
+  }
+
   if (action === 'retry') {
     actionEl.textContent = 'Retrying...';
     const res = await chrome.runtime.sendMessage({
@@ -980,6 +1267,7 @@ function cancelQueueMarkRead() {
 function closeQueueSheet({ immediate = false } = {}) {
   clearTimeout(queueSheetCloseTimer);
   cancelQueueMarkRead();
+  hideHighlightChip();
   isQueueSheetOpen = false;
 
   if (immediate) {
@@ -1176,7 +1464,11 @@ function renderQueueSheet(item) {
   const body = item.status === 'error'
     ? `<div class="tldw-summary-queue-error">${escapeHTML(item.error || 'Summary failed.')}</div>`
     : item.summary
-      ? `<div class="tldw-q-sheet-summary ${isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr'}">${parseMarkdown(item.summary)}</div>`
+      ? `<div class="tldw-q-sheet-summary ${isArabicText(item.summary) ? 'tldw-rtl' : 'tldw-ltr'}"
+              data-tldw-obsidian-source="queue" data-queue-id="${id}">${parseMarkdown(item.summary)}</div>
+         ${isObsidianExportReady()
+           ? '<div class="tldw-obsidian-hint"><span aria-hidden="true">✦</span><span>Select any text above to save it as a highlight.</span></div>'
+           : ''}`
       : `<div class="tldw-q-sheet-pending"><span class="tldw-q-sheet-spinner"></span>${escapeHTML(item.progress || 'Working on it...')}</div>`;
 
   return `
@@ -1194,6 +1486,10 @@ function renderQueueSheet(item) {
     <div class="tldw-q-sheet-body">${body}</div>
     <footer class="tldw-q-sheet-actions">
       ${item.summary ? `<button type="button" data-tldw-queue-action="copy" data-queue-id="${id}">Copy</button>` : ''}
+      ${item.summary && isObsidianExportReady()
+        ? `<button type="button" class="tldw-q-sheet-obsidian" data-tldw-queue-action="obsidian" data-queue-id="${id}"
+                   title="Save this summary as a note in Obsidian">✦ Save to Obsidian</button>`
+        : ''}
       ${item.status === 'error' ? `<button type="button" data-tldw-queue-action="retry" data-queue-id="${id}">Retry</button>` : ''}
       <a href="${escapeHTML(item.videoUrl || '#')}" target="_blank" rel="noreferrer">Open video</a>
       <button class="tldw-q-sheet-remove" type="button" data-tldw-queue-action="remove" data-queue-id="${id}">Remove</button>

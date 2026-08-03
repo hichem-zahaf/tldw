@@ -1,10 +1,13 @@
 let currentVideoId = null;
 let currentVideoUrl = '';
 let currentVideoTitle = '';
+let currentSummaryText = '';
 let activeSummaryRequestId = null;
 
 let selectedFormat = 'paragraph';
 let selectedLevel = 3;
+let obsidianEnabled = false;
+let obsidianVault = '';
 
 const LEVEL_BADGES_SHORT = {
   1: '⚡ Level 1: TL;DR',
@@ -30,6 +33,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   if (settingsRes?.success && settingsRes.settings) {
     selectedFormat = settingsRes.settings.summaryFormat || 'paragraph';
     selectedLevel = settingsRes.settings.summaryLevel || 3;
+    obsidianEnabled = !!settingsRes.settings.obsidianEnabled;
+    obsidianVault = String(settingsRes.settings.obsidianVault || '').trim();
   }
 
   // Set up format tabs
@@ -76,11 +81,17 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
   });
 
+  document.getElementById('obsidian-btn').addEventListener('click', () => {
+    savePopupSummaryToObsidian();
+  });
+
   document.getElementById('lang-select').addEventListener('change', () => {
     if (currentVideoId) {
       triggerSummary(true);
     }
   });
+
+  updateObsidianButtonVisibility();
 
   // Query active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -139,12 +150,16 @@ async function checkCacheOnLoad() {
     });
 
     if (res && res.cached && res.summary) {
+      currentSummaryText = res.summary;
       const isArabic = isArabicText(res.summary);
       summaryBox.className = `summary-box ${isArabic ? 'rtl' : 'ltr'}`;
       summaryBox.innerHTML = parseMarkdown(res.summary);
       summaryBox.style.display = 'block';
+      updateObsidianButtonVisibility();
       showStatus('Loaded from cache!');
     } else {
+      currentSummaryText = '';
+      updateObsidianButtonVisibility();
       showStatus('Ready to summarize. Click "✨ Summarize".');
     }
   } catch (err) {
@@ -185,10 +200,12 @@ async function triggerSummary(forceRefresh = false) {
       throw new Error(response.error || 'Failed to generate summary.');
     }
 
+    currentSummaryText = response.summary || '';
     const isArabic = isArabicText(response.summary);
     summaryBox.className = `summary-box ${isArabic ? 'rtl' : 'ltr'}`;
     summaryBox.innerHTML = parseMarkdown(response.summary);
     summaryBox.style.display = 'block';
+    updateObsidianButtonVisibility();
 
     showStatus(response.cached ? 'Loaded from cache' : 'Summary generated!');
 
@@ -267,4 +284,82 @@ function isArabicText(text) {
 function showStatus(msg) {
   const el = document.getElementById('status-msg');
   if (el) el.textContent = msg;
+}
+
+function isObsidianExportReady() {
+  return obsidianEnabled && !!obsidianVault;
+}
+
+function updateObsidianButtonVisibility() {
+  const btn = document.getElementById('obsidian-btn');
+  if (!btn) return;
+  btn.style.display = isObsidianExportReady() && currentSummaryText
+    ? 'inline-flex'
+    : 'none';
+}
+
+function launchObsidianUri(uri) {
+  const target = String(uri || '').trim();
+  if (!target.startsWith('obsidian://')) {
+    throw new Error('Invalid Obsidian URI.');
+  }
+
+  const anchor = document.createElement('a');
+  anchor.href = target;
+  anchor.rel = 'noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+
+  chrome.runtime.sendMessage({ action: 'OPEN_OBSIDIAN_URI', uri: target }).catch(() => {});
+}
+
+async function savePopupSummaryToObsidian() {
+  if (!currentSummaryText) return;
+
+  const btn = document.getElementById('obsidian-btn');
+  const originalText = btn ? btn.textContent : '';
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+  }
+
+  try {
+    if (!isObsidianExportReady()) {
+      throw new Error('Enable Obsidian export in settings first.');
+    }
+
+    const response = await chrome.runtime.sendMessage({
+      action: 'SAVE_TO_OBSIDIAN',
+      mode: 'bookmark',
+      videoId: currentVideoId,
+      videoTitle: currentVideoTitle,
+      videoUrl: currentVideoUrl,
+      summary: currentSummaryText
+    });
+
+    if (!response?.success || !response.uri) {
+      throw new Error(response?.error || 'Failed to save to Obsidian.');
+    }
+
+    if (response.useClipboard && response.markdown) {
+      await navigator.clipboard.writeText(response.markdown);
+    }
+
+    launchObsidianUri(response.uri);
+
+    showStatus('Opening in Obsidian…');
+    if (btn) btn.textContent = 'Saved';
+  } catch (err) {
+    showStatus(`⚠️ ${err.message || String(err)}`);
+    if (btn) btn.textContent = originalText;
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      setTimeout(() => {
+        if (btn.textContent === 'Saved') btn.textContent = originalText;
+      }, 1600);
+    }
+  }
 }

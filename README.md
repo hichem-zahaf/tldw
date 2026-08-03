@@ -25,6 +25,7 @@
   - **OpenRouter** *(Gemini 2.5 Flash / Flash Latest)*
 - ⚡ **Instant Caching**: Saves generated summaries in extension storage to prevent redundant API calls and save quota.
 - 📄 **Full Transcript Inspector**: View the raw transcript in a collapsible inspector pane whenever you want to dig into the source text.
+- 📓 **Optional Obsidian Export**: Bookmark a full summary or highlight selected text into `TLDW/{video title}.md` in your Obsidian vault (opens the note for your own comments).
 
 ---
 
@@ -55,6 +56,7 @@ git clone https://github.com/yazinsai/tldw.git
 - **Watch Page**: Open any YouTube video. The `⚡ TL;DW` summary container appears automatically. Click **✨ Summarize Video** or adjust format/level controls.
 - **Feed Cards**: On the YouTube Home page or search results, click `⚡ Summarize` below any video card to add it to the summary queue. Open the top-right `TL;DW Queue` tray to review running and completed summaries together.
 - **Extension Popup**: Click the toolbar extension icon on any active YouTube tab to quickly check cache or generate a summary with custom level/format settings.
+- **Obsidian (optional)**: In Settings, enable Save to Obsidian and enter your vault name. On a summary, click ★ to bookmark the full note, or select text and click **Save highlight**. Notes land at `TLDW/{video title}.md` with a `[[YYYY-MM-DD]]` date link and open in Obsidian.
 
 ---
 

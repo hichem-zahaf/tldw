@@ -8,7 +8,7 @@ TL;DW is a Chrome extension that summarizes YouTube videos. This policy explains
 
 - API credentials: the Clipscript API key and AI-provider API key that you enter in the settings page.
 - YouTube content: the current video's URL, ID, title, transcript, and the summary generated from that transcript.
-- Preferences: your selected provider, language, detail level, format, automatic-summary setting, and feed-button setting.
+- Preferences: your selected provider, language, detail level, format, automatic-summary setting, feed-button setting, and optional Obsidian export settings (enabled flag and vault name).
 - Queue and cache data: queued videos, progress, transcripts, summaries, and errors needed to provide batch summaries and avoid duplicate requests.
 
 ## How data is used
@@ -26,6 +26,8 @@ When you request a summary:
 - The YouTube video URL and your Clipscript API key are sent to Clipscript so it can obtain the transcript.
 - The transcript, video title, summary instructions, and your AI-provider API key are sent to the provider you selected: Google Gemini, OpenAI, Groq, Anthropic, or OpenRouter.
 - The extension may request transcript data directly from YouTube when available.
+
+If you enable optional Obsidian export, the video title, URL, summary text, and any selected highlight are passed to the Obsidian desktop app on your device through the local `obsidian://` URI handler so a markdown note can be created or opened. That content is not sent to TL;DW servers.
 
 These services process data under their own terms and privacy policies. TL;DW does not transmit data to advertising, analytics, or data-broker services.
 

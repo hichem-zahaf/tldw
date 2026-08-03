@@ -6,7 +6,9 @@ const DEFAULT_SETTINGS = {
   summaryLevel: 3,
   summaryFormat: 'paragraph',
   autoSummarizeWatch: false,
-  showFeedButtons: true
+  showFeedButtons: true,
+  obsidianEnabled: false,
+  obsidianVault: ''
 };
 
 const LEVEL_LABELS = {
@@ -36,13 +38,18 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   document.getElementById('auto-summarize-watch').checked = !!settings.autoSummarizeWatch;
   document.getElementById('show-feed-buttons').checked = settings.showFeedButtons !== false;
+  document.getElementById('obsidian-enabled').checked = !!settings.obsidianEnabled;
+  document.getElementById('obsidian-vault').value = settings.obsidianVault || '';
 
   updateAiKeyVisibility();
+  updateObsidianVaultVisibility();
 
   // Event Listeners
   document.getElementById('ai-provider').addEventListener('change', updateAiKeyVisibility);
+  document.getElementById('obsidian-enabled').addEventListener('change', updateObsidianVaultVisibility);
   document.getElementById('save-btn').addEventListener('click', saveSettings);
   document.getElementById('test-clipscript-btn').addEventListener('click', testClipscriptKey);
+  document.getElementById('test-obsidian-btn').addEventListener('click', testObsidianVault);
 
   slider.addEventListener('input', (e) => {
     updateLevelBadge(e.target.value);
@@ -94,8 +101,24 @@ function updateAiKeyVisibility() {
   }
 }
 
+function updateObsidianVaultVisibility() {
+  const enabled = document.getElementById('obsidian-enabled').checked;
+  const vaultGroup = document.getElementById('obsidian-vault-group');
+  if (vaultGroup) {
+    vaultGroup.style.display = enabled ? 'flex' : 'none';
+  }
+}
+
 async function saveSettings() {
   const slider = document.getElementById('summary-level-slider');
+  const obsidianEnabled = document.getElementById('obsidian-enabled').checked;
+  const obsidianVault = document.getElementById('obsidian-vault').value.trim();
+
+  if (obsidianEnabled && !obsidianVault) {
+    alert('Enter your Obsidian vault name, or turn off Save to Obsidian.');
+    return;
+  }
+
   const newSettings = {
     clipscriptApiKey: document.getElementById('clipscript-key').value.trim(),
     aiProvider: document.getElementById('ai-provider').value,
@@ -104,7 +127,9 @@ async function saveSettings() {
     summaryLevel: Number(slider.value) || 3,
     summaryFormat: currentSelectedFormat,
     autoSummarizeWatch: document.getElementById('auto-summarize-watch').checked,
-    showFeedButtons: document.getElementById('show-feed-buttons').checked
+    showFeedButtons: document.getElementById('show-feed-buttons').checked,
+    obsidianEnabled,
+    obsidianVault
   };
 
   await chrome.storage.local.set(newSettings);
@@ -147,6 +172,49 @@ async function testClipscriptKey() {
     btn.disabled = false;
     btn.textContent = 'Test Key';
   }
+}
+
+function testObsidianVault() {
+  const vault = document.getElementById('obsidian-vault').value.trim();
+
+  if (!vault) {
+    alert('Enter your Obsidian vault name first.');
+    return;
+  }
+
+  // Build + launch synchronously inside the click handler so Chrome keeps the
+  // user gesture (needed for the first OS "Open Obsidian?" prompt).
+  const uri = `obsidian://open?vault=${encodeURIComponent(vault)}`;
+
+  try {
+    launchObsidianUri(uri);
+  } catch (err) {
+    alert(`❌ Could not open Obsidian: ${err.message || String(err)}`);
+    return;
+  }
+
+  alert(
+    'Sent the vault open request to Obsidian.\n\n' +
+    '✅ If Obsidian switches to that vault, the name is correct.\n' +
+    '❌ If nothing happens / no prompt, paste this into Chrome\'s address bar and hit Enter:\n\n' +
+    uri +
+    '\n\nThat also registers the handler if macOS never asked. If Obsidian says the vault was not found, fix the name (vault switcher, bottom-left).'
+  );
+}
+
+function launchObsidianUri(uri) {
+  const target = String(uri || '').trim();
+  if (!target.startsWith('obsidian://')) {
+    throw new Error('Invalid Obsidian URI.');
+  }
+
+  const anchor = document.createElement('a');
+  anchor.href = target;
+  anchor.rel = 'noreferrer';
+  anchor.style.display = 'none';
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
 }
 
 function showToast(msg) {

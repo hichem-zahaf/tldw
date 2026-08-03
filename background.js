@@ -9,6 +9,7 @@ import {
   markQueueItemsRead,
   mergeQueueItem
 } from './summary-queue.js';
+import { buildObsidianOpenVaultUri, planObsidianExport } from './obsidian-export.js';
 
 // Default configuration settings
 const DEFAULT_SETTINGS = {
@@ -19,7 +20,9 @@ const DEFAULT_SETTINGS = {
   summaryLevel: 3, // Level 1 (Ultra Short) to 5 (Deep Dive)
   summaryFormat: 'paragraph', // 'paragraph', 'bullets', 'key_takeaways'
   autoSummarizeWatch: false,
-  showFeedButtons: true
+  showFeedButtons: true,
+  obsidianEnabled: false,
+  obsidianVault: ''
 };
 
 let summaryQueueWriteLock = Promise.resolve();
@@ -151,7 +154,93 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     clearSummaryCache().then(() => sendResponse({ success: true }));
     return true;
   }
+
+  if (request.action === 'SAVE_TO_OBSIDIAN') {
+    handleSaveToObsidian(request)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (request.action === 'OPEN_OBSIDIAN_URI') {
+    openObsidianUri(request.uri)
+      .then(() => sendResponse({ success: true }))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (request.action === 'TEST_OBSIDIAN_VAULT') {
+    handleTestObsidianVault(request.vault)
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
 });
+
+async function handleTestObsidianVault(vault) {
+  // Return the URI only — callers must launch it from a page with a user gesture.
+  // Service-worker chrome.tabs.create(obsidian://...) is often swallowed by Chrome.
+  return {
+    success: true,
+    uri: buildObsidianOpenVaultUri(vault),
+    message: 'Open this vault URI from the settings page click handler.'
+  };
+}
+
+async function handleSaveToObsidian(request) {
+  const settings = await chrome.storage.local.get(DEFAULT_SETTINGS);
+  if (!settings.obsidianEnabled) {
+    throw new Error('Obsidian export is disabled. Enable it in TL;DW settings.');
+  }
+
+  const vault = String(settings.obsidianVault || '').trim();
+  if (!vault) {
+    throw new Error('Set your Obsidian vault name in TL;DW settings.');
+  }
+
+  const summary = String(request.summary || '').trim();
+  if (!summary) {
+    throw new Error('No summary available to save.');
+  }
+
+  const highlight = String(request.highlight || '').trim();
+  if (request.mode === 'highlight' && !highlight) {
+    throw new Error('Select text in the summary to save a highlight.');
+  }
+
+  const planned = planObsidianExport({
+    vault,
+    videoTitle: request.videoTitle,
+    videoId: request.videoId,
+    videoUrl: request.videoUrl,
+    summary,
+    highlight
+  });
+
+  return {
+    success: true,
+    useClipboard: planned.useClipboard,
+    markdown: planned.markdown,
+    uri: planned.uri,
+    filePath: planned.filePath
+  };
+}
+
+async function openObsidianUri(uri) {
+  const target = String(uri || '').trim();
+  if (!target.startsWith('obsidian://')) {
+    throw new Error('Invalid Obsidian URI.');
+  }
+
+  // Create a background tab for the protocol handoff. Do not navigate the
+  // active YouTube tab, and do not auto-close immediately (that aborted launch).
+  const tab = await chrome.tabs.create({ url: target, active: false });
+  if (tab?.id !== undefined) {
+    setTimeout(() => {
+      chrome.tabs.remove(tab.id).catch(() => {});
+    }, 5000);
+  }
+}
 
 async function getStoredSummaryQueue() {
   const data = await chrome.storage.local.get(SUMMARY_QUEUE_KEY);

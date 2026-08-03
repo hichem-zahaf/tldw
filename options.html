@@ -119,6 +119,29 @@
       </div>
     </div>
 
+    <!-- Obsidian Export -->
+    <div class="section-card">
+      <h2>4. Obsidian Export (Optional)</h2>
+      <p class="section-desc">Save bookmarks and highlights as markdown notes in your Obsidian vault. Notes are created at <code>TLDW/{video title}.md</code> and opened so you can add your own comments.</p>
+
+      <div class="form-group checkbox-group">
+        <label class="switch">
+          <input type="checkbox" id="obsidian-enabled">
+          <span class="slider"></span>
+        </label>
+        <span class="checkbox-label">Enable Save to Obsidian</span>
+      </div>
+
+      <div class="form-group" id="obsidian-vault-group">
+        <label for="obsidian-vault">Vault name</label>
+        <div class="input-with-button">
+          <input type="text" id="obsidian-vault" placeholder="Exact Obsidian vault name" autocomplete="off">
+          <button type="button" id="test-obsidian-btn" class="btn btn-secondary">Test Vault</button>
+        </div>
+        <small class="help-text">Must match the vault name in Obsidian (vault switcher, bottom-left). Test opens that vault via the <code>obsidian://</code> handler — Obsidian will error if the name is wrong. First use may ask your OS for permission.</small>
+      </div>
+    </div>
+
     <!-- Actions -->
     <div class="actions-footer">
       <div id="toast" class="toast" style="display:none;">Settings saved!</div>
