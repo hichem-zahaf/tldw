@@ -1,4 +1,5 @@
 let currentVideoId = null;
+let currentTabId = null;
 let currentVideoUrl = '';
 let currentVideoTitle = '';
 let currentSummaryText = '';
@@ -93,6 +94,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   updateObsidianButtonVisibility();
+  renderTimeSaved();
 
   // Query active tab
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -102,6 +104,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     currentVideoId = extractVideoId(tab.url);
     currentVideoTitle = tab.title ? tab.title.replace('- YouTube', '').trim() : 'YouTube Video';
 
+    currentTabId = tab.id;
     document.getElementById('active-video-section').style.display = 'flex';
     document.getElementById('not-youtube-section').style.display = 'none';
     document.getElementById('video-title').textContent = currentVideoTitle;
@@ -195,6 +198,7 @@ async function triggerSummary(forceRefresh = false) {
       language: selectedLang,
       summaryLevel: selectedLevel,
       summaryFormat: selectedFormat,
+      videoDurationSeconds: await getActiveTabVideoDuration(),
       summaryRequestId,
       forceRefresh
     });
@@ -212,6 +216,7 @@ async function triggerSummary(forceRefresh = false) {
     updateObsidianButtonVisibility();
 
     showStatus(response.cached ? 'Loaded from cache' : 'Summary generated!');
+    renderTimeSaved();
 
   } catch (err) {
     showStatus(`⚠️ ${err.message || String(err)}`);
@@ -221,6 +226,55 @@ async function triggerSummary(forceRefresh = false) {
     }
     if (summarizeBtn) summarizeBtn.disabled = false;
   }
+}
+
+/** The player knows its own length; the popup can only get it via the page. */
+async function getActiveTabVideoDuration() {
+  if (currentTabId === null) return 0;
+
+  try {
+    const res = await chrome.tabs.sendMessage(currentTabId, { action: 'GET_VIDEO_DURATION' });
+    return Number(res?.durationSeconds) || 0;
+  } catch (_) {
+    return 0;
+  }
+}
+
+async function renderTimeSaved() {
+  const box = document.getElementById('time-saved');
+  if (!box) return;
+
+  let stats = null;
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_TIME_SAVED' });
+    if (res?.success) stats = res.stats;
+  } catch (_) {}
+
+  if (!stats?.videos || !stats.savedSeconds) {
+    box.style.display = 'none';
+    return;
+  }
+
+  document.getElementById('time-saved-value').textContent = formatTimeSpan(stats.savedSeconds);
+  document.getElementById('time-saved-sub').textContent =
+    `${stats.videos} video${stats.videos === 1 ? '' : 's'} summarized` +
+    (stats.readSeconds >= 60 ? ` · ~${formatTimeSpan(stats.readSeconds)} reading instead` : '');
+  box.style.display = 'flex';
+}
+
+// Mirrors formatTimeSpan in time-saved.js; the popup is a classic script and
+// cannot import the module.
+function formatTimeSpan(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+
+  if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (hours) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  return `${minutes}m`;
 }
 
 // Mirrors renderStars/getRatingLabel in summary-answer.js; the popup is a

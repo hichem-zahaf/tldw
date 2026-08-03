@@ -15,6 +15,7 @@ let obsidianVault = '';
 // Highlight handed off from the chip when the sheet's Obsidian button is pressed.
 let pendingFooterHighlight = null;
 let summaryQueue = [];
+let timeSavedStats = null;
 let isSummaryQueueOpen = false;
 let contentSettingsLoaded = false;
 let contentSettingsPromise = null;
@@ -30,6 +31,7 @@ let activeFeedCard = null;
 let feedPillHideTimer = null;
 
 const SUMMARY_QUEUE_KEY = 'tldw_summary_queue';
+const TIME_SAVED_KEY = 'tldw_time_saved';
 const QUEUE_SHEET_TRANSITION_MS = 340;
 // Long enough that opening the wrong row and bouncing straight back out does
 // not silently consume a summary, short enough to feel immediate.
@@ -79,13 +81,19 @@ window.addEventListener('resize', debounce(repositionWatchSummaryBox, 250));
 document.addEventListener('mouseup', handleSummarySelectionMouseUp);
 document.addEventListener('mousedown', handleHighlightChipOutsideMouseDown, true);
 
-chrome.runtime.onMessage.addListener((request) => {
+chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (
     request.action === 'SUMMARY_PROGRESS' &&
     request.summaryRequestId === activeSummaryRequestId &&
     request.status
   ) {
     renderWatchLoadingStatus(request.status);
+  }
+
+  // The popup has no access to the page, so it asks the player through us.
+  if (request.action === 'GET_VIDEO_DURATION') {
+    sendResponse({ durationSeconds: getWatchPageDurationSeconds() });
+    return true;
   }
 });
 
@@ -106,6 +114,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
     renderSummaryQueueWidget();
     updateFeedPillStates();
+  }
+
+  if (changes[TIME_SAVED_KEY]) {
+    timeSavedStats = summarizeTimeSavedLedger(changes[TIME_SAVED_KEY].newValue);
+    renderSummaryQueueWidget();
   }
 
   let obsidianSettingsChanged = false;
@@ -132,6 +145,7 @@ function initTLDW() {
   ensureContentSettingsLoaded();
   injectSummaryQueueWidget();
   loadSummaryQueue();
+  loadTimeSavedStats();
 
   if (url.includes('/watch?v=')) {
     const videoId = extractVideoId(url);
@@ -188,6 +202,16 @@ async function loadSummaryQueue() {
       summaryQueue = Array.isArray(res.queue) ? res.queue : [];
       renderSummaryQueueWidget();
       updateFeedPillStates();
+    }
+  } catch (_) {}
+}
+
+async function loadTimeSavedStats() {
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'GET_TIME_SAVED' });
+    if (res?.success && res.stats) {
+      timeSavedStats = res.stats;
+      renderSummaryQueueWidget();
     }
   } catch (_) {}
 }
@@ -476,6 +500,7 @@ async function fetchAndRenderWatchSummary(forceRefresh = false) {
       language: selectedLang,
       summaryLevel: watchLevel,
       summaryFormat: watchFormat,
+      videoDurationSeconds: getWatchPageDurationSeconds(),
       summaryRequestId,
       forceRefresh
     });
@@ -844,7 +869,8 @@ function enhanceFeedCards() {
     feedCardContexts.set(card, {
       videoId,
       videoUrl: titleLink.href,
-      videoTitle: getFeedCardVideoTitle(card, titleLink)
+      videoTitle: getFeedCardVideoTitle(card, titleLink),
+      durationSeconds: getFeedCardDurationSeconds(card)
     });
 
     markFeedCardEnhanced(card);
@@ -901,7 +927,8 @@ function ensureFeedPillPortal() {
       context.videoId,
       context.videoUrl,
       pill,
-      context.videoTitle
+      context.videoTitle,
+      context.durationSeconds
     );
   });
 
@@ -983,6 +1010,50 @@ function cleanFeedCardTitle(rawTitle) {
     .trim();
 }
 
+/**
+ * Reads the length off the thumbnail badge. YouTube ships several renderers for
+ * it, and a live stream or a shelf card has none — 0 means "ask the background".
+ */
+function getFeedCardDurationSeconds(card) {
+  const badges = card.querySelectorAll([
+    'ytd-thumbnail-overlay-time-status-renderer #text',
+    'ytd-thumbnail-overlay-time-status-renderer',
+    '.ytd-thumbnail-overlay-time-status-renderer',
+    'badge-shape .badge-shape-wiz__text',
+    '.yt-badge-shape__text',
+    'yt-thumbnail-badge-view-model'
+  ].join(','));
+
+  for (const badge of badges) {
+    const seconds = parseClockSeconds(
+      badge.getAttribute?.('aria-label') || badge.textContent || ''
+    );
+    if (seconds) return seconds;
+  }
+
+  return 0;
+}
+
+function getWatchPageDurationSeconds() {
+  const player = document.querySelector('#movie_player video, video.html5-main-video, video');
+  if (player && Number.isFinite(player.duration) && player.duration > 0) {
+    return Math.round(player.duration);
+  }
+
+  return parseClockSeconds(document.querySelector('.ytp-time-duration')?.textContent || '');
+}
+
+// Mirrors parseDurationSeconds in time-saved.js; content scripts cannot import it.
+function parseClockSeconds(value) {
+  const clock = String(value || '').trim().match(/(?:^|\s)(\d{1,3}(?::[0-5]?\d){1,2})(?:\s|$)/);
+  if (!clock) return 0;
+
+  return clock[1]
+    .split(':')
+    .map(Number)
+    .reduce((total, part) => total * 60 + part, 0);
+}
+
 function getFeedCardThumbnail(card) {
   return (
     card.querySelector('yt-thumbnail-view-model') ||
@@ -997,7 +1068,7 @@ function getFeedCardThumbnail(card) {
 /**
  * Handle feed card summary request
  */
-async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitle = '') {
+async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitle = '', durationSeconds = 0) {
   const existing = findQueueItemByVideoId(videoId);
   if (existing) {
     isSummaryQueueOpen = true;
@@ -1020,7 +1091,8 @@ async function handleFeedCardSummary(card, videoId, videoUrl, pillBtn, videoTitl
       videoTitle,
       language: queueLanguage,
       summaryLevel: watchLevel,
-      summaryFormat: watchFormat
+      summaryFormat: watchFormat,
+      videoDurationSeconds: durationSeconds
     });
 
     if (!response.success) {
@@ -1442,6 +1514,7 @@ function renderSummaryQueuePanel(stats) {
           </div>
           <button class="tldw-q-close" type="button" data-tldw-queue-action="close" aria-label="Close queue">×</button>
         </div>
+        ${renderTimeSavedBanner()}
         ${renderQueueFilters(stats)}
       </header>
       <div class="tldw-q-timeline">${renderQueueRows()}</div>
@@ -1449,6 +1522,30 @@ function renderSummaryQueuePanel(stats) {
       <section class="tldw-q-sheet" tabindex="-1" aria-hidden="${String(!(isQueueSheetOpen && active))}">
         ${active ? renderQueueSheet(active) : ''}
       </section>
+    </div>
+  `;
+}
+
+/**
+ * The lifetime tally, framed as what it actually bought: video you never had to
+ * sit through, net of the time spent reading the summaries that replaced it.
+ */
+function renderTimeSavedBanner() {
+  const stats = timeSavedStats;
+  if (!stats || !stats.videos || !stats.savedSeconds) return '';
+
+  const readingNote = stats.readSeconds >= 60
+    ? ` · ~${formatTimeSpan(stats.readSeconds)} reading instead`
+    : '';
+
+  return `
+    <div class="tldw-q-saved" title="Total length of the videos you summarized instead of watching, minus an estimate of the time spent reading those summaries.">
+      <span class="tldw-q-saved-icon" aria-hidden="true">⏱</span>
+      <span class="tldw-q-saved-copy">
+        <span class="tldw-q-saved-value">${escapeHTML(formatTimeSpan(stats.savedSeconds))}</span>
+        <span class="tldw-q-saved-label">not watched</span>
+        <span class="tldw-q-saved-sub">${stats.videos} video${stats.videos === 1 ? '' : 's'} summarized${escapeHTML(readingNote)}</span>
+      </span>
     </div>
   `;
 }
@@ -1510,9 +1607,15 @@ function renderQueueRow(item, ts) {
   const subline = status === 'done'
     ? renderAnswerBadge(item.answer)
     : `<span class="tldw-q-row-sub">${escapeHTML(sublineText)}</span>`;
-  const thumb = item.videoId
-    ? `<img class="tldw-q-thumb" alt="" loading="lazy" src="https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/default.jpg">`
-    : '<span class="tldw-q-thumb"></span>';
+  const clock = formatClock(item.durationSeconds);
+  const thumb = `
+    <span class="tldw-q-thumb-wrap">
+      ${item.videoId
+        ? `<img class="tldw-q-thumb" alt="" loading="lazy" src="https://i.ytimg.com/vi/${encodeURIComponent(item.videoId)}/default.jpg">`
+        : '<span class="tldw-q-thumb"></span>'}
+      ${clock ? `<span class="tldw-q-thumb-dur">${escapeHTML(clock)}</span>` : ''}
+    </span>
+  `;
   const unread = isSummaryQueueItemUnread(item);
 
   return `
@@ -1645,6 +1748,44 @@ function startQueueTimeTicker() {
 function stopQueueTimeTicker() {
   clearInterval(queueTimeTicker);
   queueTimeTicker = null;
+}
+
+// Mirrors getTimeSavedStats/formatTimeSpan/formatClock in time-saved.js;
+// content scripts cannot import modules.
+function summarizeTimeSavedLedger(ledger) {
+  const watchSeconds = Math.max(0, Math.round(Number(ledger?.watchSeconds) || 0));
+  const readSeconds = Math.max(0, Math.round(Number(ledger?.readSeconds) || 0));
+
+  return {
+    videos: Math.max(0, Math.round(Number(ledger?.count) || 0)),
+    watchSeconds,
+    readSeconds,
+    savedSeconds: Math.max(0, watchSeconds - readSeconds)
+  };
+}
+
+function formatTimeSpan(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+
+  if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (hours) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  return `${minutes}m`;
+}
+
+function formatClock(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (!total) return '';
+
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = String(total % 60).padStart(2, '0');
+
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${secs}` : `${minutes}:${secs}`;
 }
 
 // Mirrors getQueueStats in summary-queue.js; content scripts cannot import it.

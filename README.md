@@ -9,6 +9,7 @@
 - 🎯 **Embedded Summary Box**: Injects a clean, native-feeling summary card right above the description on any YouTube video (`youtube.com/watch?v=...`).
 - ⭐ **Answer-First Summaries**: Reads the thumbnail and title to work out what the video promised, then leads with the answer and rates how well the video delivers on a 1–3 star scale. Videos that promise nothing specific (vlogs, music, comedy) just get a plain summary. Toggle it off in Settings to skip the image call.
 - ⚡ **Batch Feed Summaries**: Adds a `⚡ Summarize` button under thumbnails across YouTube Home, Search, and Recommendations, then tracks queued/running/done summaries in a persistent top-right queue.
+- ⏱️ **Time Saved Counter**: Adds up the length of every video you summarized instead of watching, minus an estimate of the time you spent reading those summaries (230 wpm). Shown at the top of the Summary Queue, in the popup, and in Settings, where it can be reset. Counted once per video and kept when you clear the summary cache.
 - 🎚️ **5-Level Detail Slider**: Tailor summary depth on the fly:
   - **Level 1 (TL;DR)**: 1-sentence executive summary
   - **Level 2 (Short)**: 2–3 concise sentences
@@ -71,6 +72,7 @@ tldw/
 ├── summary-prompts.js  # Prompt variants, per-video-type profiles, answer block contract
 ├── video-classifier.js # Thumbnail + title classification (video type, promise, hook)
 ├── summary-answer.js   # Parses the answer block out of a summary, formats it for copy/export
+├── time-saved.js       # Lifetime "video you didn't watch" ledger, duration parsing, formatting
 ├── content.js          # Injected content script for YouTube watch page & feed cards
 ├── content.css         # Styling for embedded YouTube UI elements
 ├── popup.html          # Toolbar extension popup UI

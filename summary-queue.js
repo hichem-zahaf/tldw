@@ -9,6 +9,7 @@ export function buildQueueItem({
   language = 'en',
   summaryLevel = 3,
   summaryFormat = 'paragraph',
+  durationSeconds = 0,
   now = Date.now()
 }) {
   return {
@@ -16,6 +17,7 @@ export function buildQueueItem({
     videoId,
     videoUrl,
     videoTitle: String(videoTitle || 'YouTube video').trim() || 'YouTube video',
+    durationSeconds: Number(durationSeconds) > 0 ? Math.round(Number(durationSeconds)) : 0,
     language,
     summaryLevel,
     summaryFormat,

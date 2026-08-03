@@ -52,6 +52,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('save-btn').addEventListener('click', saveSettings);
   document.getElementById('test-clipscript-btn').addEventListener('click', testClipscriptKey);
   document.getElementById('test-obsidian-btn').addEventListener('click', testObsidianVault);
+  document.getElementById('reset-time-saved-btn').addEventListener('click', resetTimeSaved);
+  renderTimeSaved();
 
   slider.addEventListener('input', (e) => {
     updateLevelBadge(e.target.value);
@@ -65,6 +67,52 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
   });
 });
+
+async function renderTimeSaved(stats = null) {
+  let resolved = stats;
+
+  if (!resolved) {
+    try {
+      const res = await chrome.runtime.sendMessage({ action: 'GET_TIME_SAVED' });
+      resolved = res?.stats || null;
+    } catch (_) {}
+  }
+
+  const videos = resolved?.videos || 0;
+  document.getElementById('time-saved-value').textContent = formatTimeSpan(resolved?.savedSeconds || 0);
+  document.getElementById('time-saved-detail').textContent = videos
+    ? `${videos} video${videos === 1 ? '' : 's'} summarized · ` +
+      `${formatTimeSpan(resolved.watchSeconds)} of video · ~${formatTimeSpan(resolved.readSeconds)} spent reading`
+    : 'No videos summarized yet.';
+}
+
+async function resetTimeSaved() {
+  const btn = document.getElementById('reset-time-saved-btn');
+  btn.disabled = true;
+
+  try {
+    const res = await chrome.runtime.sendMessage({ action: 'RESET_TIME_SAVED' });
+    await renderTimeSaved(res?.stats || null);
+    showToast('Time saved reset.');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// Mirrors formatTimeSpan in time-saved.js; the options page is a classic script
+// and cannot import the module.
+function formatTimeSpan(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  if (total < 60) return `${total}s`;
+
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+
+  if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+  if (hours) return minutes ? `${hours}h ${minutes}m` : `${hours}h`;
+  return `${minutes}m`;
+}
 
 function updateFormatPickerButtons(selectedFormat) {
   const formatBtns = document.querySelectorAll('.format-btn');

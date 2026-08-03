@@ -1028,6 +1028,66 @@
   line-height: 1;
 }
 
+/* Lifetime "you skipped this much video" tally */
+.tldw-q-saved {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 11px;
+  padding: 9px 11px;
+  border: 1px solid rgba(53, 212, 135, 0.28);
+  border-radius: 11px;
+  background: linear-gradient(
+    135deg,
+    rgba(53, 212, 135, 0.16),
+    rgba(53, 212, 135, 0.05)
+  );
+}
+
+.tldw-q-saved-icon {
+  flex: 0 0 auto;
+  font-size: 15px;
+  line-height: 1;
+  filter: grayscale(1) brightness(1.6);
+  opacity: 0.85;
+}
+
+.tldw-q-saved-copy {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0 6px;
+  min-width: 0;
+}
+
+.tldw-q-saved-value {
+  color: #35d487;
+  font-size: 15.5px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.015em;
+}
+
+.tldw-q-saved-label {
+  color: var(--tldw-text-primary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tldw-q-saved-sub {
+  flex: 1 0 100%;
+  margin-top: 1px;
+  color: var(--tldw-text-tertiary);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: light) {
+  .tldw-q-saved-value {
+    color: #14915b;
+  }
+}
+
 .tldw-q-filters {
   display: flex;
   align-items: center;
@@ -1183,12 +1243,34 @@
   border-radius: 10px;
 }
 
+.tldw-q-thumb-wrap {
+  position: relative;
+  display: block;
+  width: 44px;
+  height: 25px;
+}
+
 .tldw-q-thumb {
+  display: block;
   width: 44px;
   height: 25px;
   border-radius: 4px;
   object-fit: cover;
   background: var(--tldw-control-bg);
+}
+
+.tldw-q-thumb-dur {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
+  padding: 0 3px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.78);
+  color: #ffffff;
+  font-size: 8.5px;
+  font-weight: 700;
+  line-height: 1.5;
+  font-variant-numeric: tabular-nums;
 }
 
 .tldw-q-row-main {

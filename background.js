@@ -16,6 +16,13 @@ import {
   mergeQueueItem
 } from './summary-queue.js';
 import { buildObsidianOpenVaultUri, planObsidianExport } from './obsidian-export.js';
+import {
+  TIME_SAVED_KEY,
+  getTimeSavedStats,
+  normalizeTimeSavedLedger,
+  parseDurationSeconds,
+  recordTimeSaved
+} from './time-saved.js';
 
 // Default configuration settings
 const DEFAULT_SETTINGS = {
@@ -33,6 +40,7 @@ const DEFAULT_SETTINGS = {
 };
 
 let summaryQueueWriteLock = Promise.resolve();
+let timeSavedWriteLock = Promise.resolve();
 
 function buildSummaryCacheKey({ videoId, language, level, format, provider }) {
   return `summary_${videoId}_${language}_L${level}_F${format}_${provider}_P${ACTIVE_SUMMARY_PROMPT_VARIANT}`;
@@ -189,6 +197,20 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     return true;
   }
 
+  if (request.action === 'GET_TIME_SAVED') {
+    handleGetTimeSaved()
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
+  if (request.action === 'RESET_TIME_SAVED') {
+    handleResetTimeSaved()
+      .then(res => sendResponse(res))
+      .catch(err => sendResponse({ success: false, error: err.message || String(err) }));
+    return true;
+  }
+
   if (request.action === 'GET_SETTINGS') {
     chrome.storage.local.get(DEFAULT_SETTINGS).then(settings => sendResponse({ success: true, settings }));
     return true;
@@ -290,6 +312,90 @@ async function openObsidianUri(uri) {
       chrome.tabs.remove(tab.id).catch(() => {});
     }, 5000);
   }
+}
+
+async function getTimeSavedLedger() {
+  const data = await chrome.storage.local.get(TIME_SAVED_KEY);
+  return normalizeTimeSavedLedger(data[TIME_SAVED_KEY]);
+}
+
+async function handleGetTimeSaved() {
+  return { success: true, stats: getTimeSavedStats(await getTimeSavedLedger()) };
+}
+
+async function handleResetTimeSaved() {
+  const nextWrite = timeSavedWriteLock.then(async () => {
+    await chrome.storage.local.remove(TIME_SAVED_KEY);
+  });
+
+  timeSavedWriteLock = nextWrite.catch(() => {});
+  await nextWrite;
+  return await handleGetTimeSaved();
+}
+
+/**
+ * Credits one video's length to the lifetime ledger. Callers never await this:
+ * the number is a running tally, not part of the summary a reader is waiting on.
+ */
+async function creditTimeSaved({ videoId, videoDurationSeconds, summary, queueItemId = '' }) {
+  const duration = await resolveVideoDurationSeconds(videoId, videoDurationSeconds);
+  if (!duration) return 0;
+
+  if (queueItemId) {
+    await updateSummaryQueueItem(
+      { id: queueItemId, durationSeconds: duration },
+      { insertIfMissing: false }
+    );
+  }
+
+  const nextWrite = timeSavedWriteLock.then(async () => {
+    const ledger = await getTimeSavedLedger();
+    const { ledger: nextLedger, recorded } = recordTimeSaved(ledger, {
+      videoId,
+      durationSeconds: duration,
+      summary
+    });
+    if (recorded) await chrome.storage.local.set({ [TIME_SAVED_KEY]: nextLedger });
+  });
+
+  timeSavedWriteLock = nextWrite.catch(() => {});
+  await nextWrite;
+  return duration;
+}
+
+/**
+ * Prefers whatever the page already knew (thumbnail badge or player), because
+ * the fallback costs a full watch-page fetch.
+ */
+async function resolveVideoDurationSeconds(videoId, hint) {
+  const fromHint = parseDurationSeconds(hint);
+  const cacheKey = `vdur_${videoId}`;
+
+  if (fromHint) {
+    await chrome.storage.local.set({ [cacheKey]: fromHint });
+    return fromHint;
+  }
+
+  if (!videoId) return 0;
+
+  const cached = await chrome.storage.local.get(cacheKey);
+  if (cached[cacheKey]) return cached[cacheKey];
+
+  const scraped = await fetchYouTubeVideoDuration(videoId).catch(() => 0);
+  if (scraped) await chrome.storage.local.set({ [cacheKey]: scraped });
+  return scraped;
+}
+
+async function fetchYouTubeVideoDuration(videoId) {
+  const response = await fetch(`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)' }
+  });
+  const html = await response.text();
+  const match = html.match(/"lengthSeconds":"(\d+)"/) || html.match(/"approxDurationMs":"(\d+)"/);
+  if (!match) return 0;
+
+  const value = Number(match[1]);
+  return match[0].startsWith('"approxDurationMs"') ? Math.round(value / 1000) : value;
 }
 
 async function getStoredSummaryQueue() {
@@ -397,6 +503,7 @@ async function handleQueueSummary({
   language,
   summaryLevel,
   summaryFormat,
+  videoDurationSeconds,
   forceRefresh = false
 }) {
   if (!videoId) {
@@ -412,6 +519,7 @@ async function handleQueueSummary({
     language,
     summaryLevel,
     summaryFormat,
+    durationSeconds: parseDurationSeconds(videoDurationSeconds),
     now
   });
 
@@ -481,6 +589,8 @@ async function processSummaryQueueItem(item, forceRefresh = false) {
       language: item.language,
       summaryLevel: item.summaryLevel,
       summaryFormat: item.summaryFormat,
+      videoDurationSeconds: item.durationSeconds,
+      queueItemId: item.id,
       forceRefresh
     }, async (step) => {
       await updateSummaryQueueItem({
@@ -551,7 +661,7 @@ async function handleCheckCache({ videoId, language, summaryLevel, summaryFormat
 /**
  * Handle fetching transcription from Clipscript/YouTube and summarizing it
  */
-async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, language: requestedLang, summaryLevel: requestedLevel, summaryFormat: requestedFormat }, onProgress = () => {}) {
+async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, language: requestedLang, summaryLevel: requestedLevel, summaryFormat: requestedFormat, videoDurationSeconds, queueItemId }, onProgress = () => {}) {
   if (!videoId) {
     throw new Error('Missing YouTube video ID.');
   }
@@ -579,6 +689,13 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
     if (cached && cached[cacheKey]) {
       const classKey = buildClassificationCacheKey(videoId);
       const classCache = await chrome.storage.local.get(classKey);
+
+      creditTimeSaved({
+        videoId,
+        videoDurationSeconds,
+        summary: cached[cacheKey].summary,
+        queueItemId
+      }).catch(() => {});
 
       return {
         success: true,
@@ -643,6 +760,8 @@ async function handleGetSummary({ videoId, videoUrl, videoTitle, forceRefresh, l
   };
   onProgress('savingSummary');
   await chrome.storage.local.set({ [cacheKey]: cacheData });
+
+  creditTimeSaved({ videoId, videoDurationSeconds, summary, queueItemId }).catch(() => {});
 
   return {
     success: true,
@@ -776,7 +895,9 @@ async function fetchYouTubeNativeTranscript(videoId) {
  */
 async function clearSummaryCache() {
   const all = await chrome.storage.local.get(null);
-  const cacheKeys = Object.keys(all).filter(k => k.startsWith('summary_') || k.startsWith('vclass_'));
+  const cacheKeys = Object.keys(all).filter(k =>
+    k.startsWith('summary_') || k.startsWith('vclass_') || k.startsWith('vdur_')
+  );
   if (cacheKeys.length > 0) {
     await chrome.storage.local.remove(cacheKeys);
   }
