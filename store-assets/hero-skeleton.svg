@@ -1,0 +1,158 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="640" viewBox="0 0 1120 640" role="img" aria-label="TL;DW skeleton preview: Summarize next to Subscribe opens the Summary Queue">
+  <defs>
+    <linearGradient id="page" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0e0e12"/>
+      <stop offset="100%" stop-color="#14141a"/>
+    </linearGradient>
+    <linearGradient id="player" x1="0" y1="0" x2="0.15" y2="1">
+      <stop offset="0%" stop-color="#2c2c36"/>
+      <stop offset="100%" stop-color="#18181f"/>
+    </linearGradient>
+    <linearGradient id="sheet" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#25252e"/>
+      <stop offset="100%" stop-color="#17171d"/>
+    </linearGradient>
+    <linearGradient id="bone" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#2a2a33"/>
+      <stop offset="45%" stop-color="#3a3a46"/>
+      <stop offset="100%" stop-color="#2a2a33"/>
+    </linearGradient>
+    <clipPath id="frame">
+      <rect width="1120" height="640" rx="28"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1120" height="640" fill="url(#page)"/>
+
+    <!-- top bar -->
+    <rect width="1120" height="48" fill="#0a0a0d"/>
+    <circle cx="30" cy="24" r="8" fill="#ff0055"/>
+    <rect x="48" y="18" width="96" height="12" rx="6" fill="url(#bone)"/>
+    <rect x="340" y="12" width="440" height="24" rx="12" fill="#1a1a20" stroke="#2a2a33"/>
+    <rect x="356" y="18" width="180" height="12" rx="6" fill="#2a2a33"/>
+    <circle cx="1078" cy="24" r="11" fill="#2a2a33"/>
+    <rect x="1010" y="16" width="42" height="16" rx="8" fill="#1f1f26"/>
+
+    <!-- video -->
+    <rect x="36" y="72" width="640" height="360" rx="16" fill="url(#player)" stroke="#22222a"/>
+    <circle cx="356" cy="248" r="34" fill="#32323c"/>
+    <polygon points="348,230 378,248 348,266" fill="#9a9aa3"/>
+    <rect x="52" y="396" width="200" height="5" rx="2.5" fill="#32323c"/>
+    <rect x="52" y="396" width="78" height="5" rx="2.5" fill="#ff0055"/>
+    <circle cx="130" cy="398.5" r="6" fill="#ffffff"/>
+
+    <!-- title -->
+    <rect x="36" y="454" width="380" height="15" rx="7.5" fill="url(#bone)"/>
+    <rect x="36" y="480" width="240" height="11" rx="5.5" fill="#24242c"/>
+
+    <!-- channel -->
+    <circle cx="54" cy="538" r="18" fill="#2e2e38"/>
+    <rect x="82" y="524" width="108" height="12" rx="6" fill="url(#bone)"/>
+    <rect x="82" y="544" width="64" height="8" rx="4" fill="#24242c"/>
+
+    <!-- Subscribe (muted) -->
+    <rect x="250" y="520" width="118" height="36" rx="18" fill="#2a2a33"/>
+    <rect x="276" y="532" width="66" height="12" rx="6" fill="#5a5a66"/>
+
+    <!-- Summarize (accent) -->
+    <rect x="382" y="520" width="148" height="36" rx="18" fill="#ff0055"/>
+    <path d="M432 529 L421 545 H432 L422 557 L450 536 H437 Z" fill="#ffffff"/>
+    <rect x="458" y="532" width="54" height="12" rx="6" fill="#ffffff"/>
+
+    <!-- dashed cue to queue -->
+    <path d="M530 512 C590 455, 650 380, 720 280" fill="none" stroke="#ff0055" stroke-opacity="0.4" stroke-width="2.5" stroke-dasharray="4 8" stroke-linecap="round"/>
+    <circle cx="720" cy="280" r="5" fill="#ff0055"/>
+
+    <!-- dim feed cards under sheet -->
+    <g opacity="0.45" transform="translate(708,72)">
+      <rect width="88" height="50" rx="8" fill="#22222a"/>
+      <rect x="100" y="6" width="112" height="9" rx="4.5" fill="#2a2a33"/>
+      <rect x="100" y="22" width="70" height="7" rx="3.5" fill="#24242c"/>
+      <rect x="100" y="36" width="56" height="14" rx="7" fill="#3a1522" stroke="#ff0055" stroke-opacity="0.5"/>
+      <rect x="110" y="40" width="36" height="6" rx="3" fill="#ff0055"/>
+
+      <g transform="translate(0,66)">
+        <rect width="88" height="50" rx="8" fill="#22222a"/>
+        <rect x="100" y="6" width="100" height="9" rx="4.5" fill="#2a2a33"/>
+        <rect x="100" y="22" width="60" height="7" rx="3.5" fill="#24242c"/>
+        <rect x="100" y="36" width="56" height="14" rx="7" fill="#3a1522" stroke="#ff0055" stroke-opacity="0.5"/>
+        <rect x="110" y="40" width="36" height="6" rx="3" fill="#ff0055"/>
+      </g>
+    </g>
+
+    <!-- queue sheet shadow -->
+    <rect x="714" y="158" width="376" height="444" rx="22" fill="#000000" opacity="0.35"/>
+
+    <!-- queue sheet -->
+    <g transform="translate(708,152)">
+      <rect width="376" height="444" rx="22" fill="url(#sheet)" stroke="#33333d"/>
+
+      <!-- header -->
+      <rect x="20" y="20" width="24" height="24" rx="7" fill="#ff0055"/>
+      <path d="M32 25 L26 36 H32 L27 42 L40 30 H33.5 Z" fill="#ffffff"/>
+      <rect x="54" y="25" width="92" height="14" rx="7" fill="#ececf0"/>
+      <circle cx="162" cy="32" r="12" fill="#ff0055"/>
+      <rect x="156" y="28" width="12" height="8" rx="4" fill="#ffffff"/>
+      <rect x="312" y="25" width="40" height="14" rx="7" fill="#2a2a33"/>
+
+      <!-- time saved -->
+      <rect x="20" y="58" width="336" height="36" rx="12" fill="#121218" stroke="#2a2a33"/>
+      <circle cx="40" cy="76" r="8" fill="#3a3a46"/>
+      <rect x="56" y="70" width="150" height="11" rx="5.5" fill="url(#bone)"/>
+      <rect x="274" y="70" width="66" height="11" rx="5.5" fill="#6b1834"/>
+
+      <!-- filters -->
+      <rect x="20" y="110" width="50" height="24" rx="12" fill="#353540"/>
+      <rect x="32" y="118" width="26" height="8" rx="4" fill="#b0b0b8"/>
+      <rect x="78" y="110" width="58" height="24" rx="12" fill="#3a1522" stroke="#ff0055"/>
+      <rect x="90" y="118" width="34" height="8" rx="4" fill="#ff8ab0"/>
+      <rect x="144" y="110" width="70" height="24" rx="12" fill="#1f1f26"/>
+      <rect x="158" y="118" width="42" height="8" rx="4" fill="#5a5a66"/>
+      <rect x="222" y="110" width="56" height="24" rx="12" fill="#1f1f26"/>
+      <rect x="236" y="118" width="28" height="8" rx="4" fill="#5a5a66"/>
+
+      <!-- expanded card -->
+      <rect x="20" y="150" width="336" height="188" rx="16" fill="#0e0e14" stroke="#2a2a33"/>
+      <circle cx="40" cy="172" r="5" fill="#ff0055"/>
+      <rect x="54" y="166" width="168" height="12" rx="6" fill="url(#bone)"/>
+      <rect x="308" y="164" width="28" height="16" rx="8" fill="#24242c"/>
+
+      <!-- type + stars -->
+      <rect x="36" y="194" width="58" height="18" rx="9" fill="#24242c"/>
+      <g transform="translate(108,195)" fill="#ffb020">
+        <path d="M8 0l2.1 4.3 4.7.7-3.4 3.3.8 4.7L8 10.8 3.8 13l.8-4.7L1.2 5l4.7-.7z"/>
+        <path d="M26 0l2.1 4.3 4.7.7-3.4 3.3.8 4.7L26 10.8 21.8 13l.8-4.7L19.2 5l4.7-.7z"/>
+        <path d="M44 0l2.1 4.3 4.7.7-3.4 3.3.8 4.7L44 10.8 39.8 13l.8-4.7L37.2 5l4.7-.7z" opacity="0.28"/>
+      </g>
+
+      <!-- answer -->
+      <rect x="36" y="228" width="288" height="13" rx="6.5" fill="#4a4a56"/>
+      <rect x="36" y="250" width="214" height="11" rx="5.5" fill="#2e2e38"/>
+
+      <!-- key points -->
+      <rect x="36" y="276" width="68" height="8" rx="4" fill="#6a6a74"/>
+      <line x1="36" y1="296" x2="320" y2="296" stroke="#24242c"/>
+      <rect x="36" y="308" width="268" height="10" rx="5" fill="url(#bone)"/>
+      <line x1="36" y1="330" x2="320" y2="330" stroke="#24242c"/>
+      <rect x="36" y="342" width="232" height="10" rx="5" fill="url(#bone)"/>
+
+      <!-- done row -->
+      <rect x="20" y="354" width="336" height="48" rx="14" fill="#14141a" stroke="#24242c"/>
+      <circle cx="40" cy="378" r="5" fill="#3a3a46"/>
+      <rect x="54" y="368" width="148" height="10" rx="5" fill="url(#bone)"/>
+      <rect x="54" y="386" width="88" height="8" rx="4" fill="#24242c"/>
+      <rect x="288" y="370" width="48" height="16" rx="8" fill="#163822"/>
+      <rect x="300" y="374" width="24" height="8" rx="4" fill="#46c878"/>
+
+      <!-- running row -->
+      <rect x="20" y="414" width="336" height="48" rx="14" fill="#14141a" stroke="#24242c"/>
+      <circle cx="40" cy="438" r="5" fill="#ffb020"/>
+      <rect x="54" y="428" width="136" height="10" rx="5" fill="url(#bone)"/>
+      <rect x="54" y="446" width="176" height="6" rx="3" fill="#24242c"/>
+      <rect x="54" y="446" width="72" height="6" rx="3" fill="#ff0055"/>
+    </g>
+  </g>
+
+  <rect x="0.5" y="0.5" width="1119" height="639" rx="28" fill="none" stroke="#2a2a33"/>
+</svg>
